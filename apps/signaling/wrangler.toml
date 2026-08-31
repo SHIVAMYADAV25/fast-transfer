@@ -1,0 +1,32 @@
+name = "fast-transfer-signaling"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "TRANSFER_ROOM"
+class_name = "TransferRoom"
+
+[[durable_objects.bindings]]
+name = "STORED_TRANSFER"
+class_name = "StoredTransfer"
+
+[[r2_buckets]]
+binding = "STORE_BUCKET"
+bucket_name = "fast-transfer-store"
+# Create the bucket first: `wrangler r2 bucket create fast-transfer-store`
+
+[[migrations]]
+tag = "v1"
+new_classes = ["TransferRoom"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["StoredTransfer"]
+
+[vars]
+ALLOWED_ORIGINS = "http://localhost:3000"
+
+# For production, override with:
+#   wrangler secret put ALLOWED_ORIGINS
+# or set a [env.production.vars] block with your real domain(s).

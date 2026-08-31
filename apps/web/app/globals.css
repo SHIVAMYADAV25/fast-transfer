@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background-color: #f2efe9;
+  }
+  body {
+    @apply font-mono text-ink antialiased;
+    font-size: 14px;
+  }
+  ::selection {
+    background: #141414;
+    color: #f2efe9;
+  }
+}
+
+@layer components {
+  /* Sharp, hairline-bordered panel — matches the reference screenshots */
+  .panel {
+    @apply border border-line bg-white/60 p-8;
+  }
+
+  .btn {
+    @apply flex w-full items-center justify-center gap-2 border border-ink px-4 py-3 text-sm font-medium transition-colors;
+  }
+  .btn-primary {
+    @apply btn bg-ink text-paper hover:bg-black disabled:cursor-not-allowed disabled:border-line disabled:bg-muted/40 disabled:text-muted;
+  }
+  .btn-secondary {
+    @apply btn bg-transparent text-ink hover:bg-ink/5;
+  }
+  .btn-tab {
+    @apply flex-1 border border-ink py-2.5 text-center text-sm font-medium transition-colors;
+  }
+  .btn-tab-active {
+    @apply bg-ink text-paper;
+  }
+  .btn-tab-inactive {
+    @apply bg-white text-muted hover:text-ink;
+  }
+
+  .input-field {
+    @apply w-full border border-line bg-white px-3 py-2.5 text-sm outline-none placeholder:text-muted/70 focus:border-ink;
+  }
+
+  .stat-box {
+    @apply border border-line px-3 py-2;
+  }
+  .stat-label {
+    @apply text-[10px] uppercase tracking-wider text-muted;
+  }
+  .stat-value {
+    @apply text-sm font-semibold text-ink;
+  }
+
+  .progress-track {
+    @apply h-1.5 w-full border border-ink bg-white;
+  }
+  .progress-fill {
+    @apply h-full bg-ink transition-[width] duration-200 ease-out;
+  }
+}
