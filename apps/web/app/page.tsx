@@ -182,6 +182,16 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
         statsRef.current = stats;
 
         const checkpoint = resumeRef.current!;
+        // The real, per-connection negotiated SCTP limit — take the
+        // minimum across every connection in use (parallel mode can have
+        // more than one) so no single connection's chunk gets rejected.
+        // This is the actual fix for "Trying to send message larger than
+        // max-message-size" — see resolveChunkSize in transfer.ts.
+        const maxMessageSize = peersRef.current.reduce<number | null>((min, p) => {
+          const size = p.getMaxMessageSize();
+          if (size == null) return min;
+          return min == null ? size : Math.min(min, size);
+        }, null);
         void sendFiles(
           channels,
           checkpoint.remainingFiles,
@@ -212,6 +222,7 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
             totalBytes: checkpoint.totalBytes,
             bytesAlreadySent: checkpoint.bytesAlreadySent,
           },
+          maxMessageSize,
         );
       };
 
@@ -614,6 +625,7 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   });
   const reconnectAttemptRef = useRef(0);
   const terminalRef = useRef(false); // set once done/error, so a late connection-state event doesn't trigger a pointless reconnect
+  const lastActivityRef = useRef(Date.now());
 
   const cleanup = useCallback(() => {
     statsRef.current?.stop();
@@ -625,6 +637,27 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
+
+  // Stall watchdog — a defensive backstop for the case where the sender's
+  // CANCEL message (see transfer.ts) can't get through either, e.g. a total
+  // connection black hole rather than a clean error. Without this, a truly
+  // silent failure leaves the UI stuck on "Securing channel…"/"Receiving…"
+  // forever with no way out except reloading the page.
+  const STALL_TIMEOUT_MS = 45_000;
+  useEffect(() => {
+    if (phase !== "connecting" && phase !== "receiving" && phase !== "reconnecting") return;
+    lastActivityRef.current = Date.now(); // reset the clock whenever we enter an active phase
+    const interval = setInterval(() => {
+      if (terminalRef.current) return;
+      if (Date.now() - lastActivityRef.current > STALL_TIMEOUT_MS) {
+        terminalRef.current = true;
+        cleanup();
+        setError("No response from the sender for a while — the connection may have been lost.");
+        setPhase("error");
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [phase, cleanup]);
 
   const startReceive = async () => {
     const input = codeInput.trim();
@@ -700,6 +733,7 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
 
       receiverRef.current = new FileReceiver({
         onProgress: (p) => {
+          lastActivityRef.current = Date.now();
           setPhase((prev) => (prev === "done" ? prev : "receiving"));
           setProgress(p);
           timingRef.current.peakBps = Math.max(timingRef.current.peakBps, p.ratePerSec);

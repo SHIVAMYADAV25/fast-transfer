@@ -159,6 +159,20 @@ export class PeerConnection {
     return this.connectionIndex;
   }
 
+  /**
+   * The actual negotiated SCTP max message size for this connection — NOT
+   * a fixed constant. This is what was missing and caused the "Trying to
+   * send message larger than max-message-size" error: CHUNK_SIZE (256KiB)
+   * plus the 4-byte frame header can exceed what a given browser pair
+   * actually negotiated, which varies by browser/version and isn't
+   * knowable in advance. Returns null if unavailable (SCTP transport not
+   * yet up, or the browser doesn't expose it) — callers must have a
+   * conservative fallback for that case.
+   */
+  getMaxMessageSize(): number | null {
+    return this.pc.sctp?.maxMessageSize ?? null;
+  }
+
   getStats(): Promise<RTCStatsReport> {
     return this.pc.getStats();
   }
