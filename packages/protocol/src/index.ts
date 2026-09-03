@@ -181,7 +181,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   TRANSFER_CANCELLED: "Transfer was cancelled.",
   FILE_READ_FAILED: "Couldn't read the selected file.",
   FILE_WRITE_FAILED: "Couldn't write the incoming file to disk.",
-  HASH_MISMATCH: "File integrity check failed — the received file doesn't match the original.",
+  HASH_MISMATCH: "File integrity check failed the received file doesn't match the original.",
   BROWSER_UNSUPPORTED: "Your browser doesn't support a feature this app needs.",
   RELAY_UNAVAILABLE: "Direct connection failed and no relay is available.",
   INVALID_ROOM: "That transfer code doesn't exist.",
