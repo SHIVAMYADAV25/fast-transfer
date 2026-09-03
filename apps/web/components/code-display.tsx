@@ -164,7 +164,7 @@ export function CodeDisplay({ code, browserLink }: CodeDisplayProps) {
           <button
             type="button"
             onClick={() => copy(browserLink, "link")}
-            className="flex items-center gap-1.5 border-l border-[#2b2b2b]/30 bg-[#f4f1ea]/60 px-3 py-2 text-xs font-medium text-[#050505] hover:bg-[#eadecc] transition-colors"
+            className="flex items-center gap-1.5 border-l border-[#2b2b2b]/30 bg-transparent px-3 py-2 text-xs font-medium text-[#050505] hover:bg-[#eadecc] transition-colors"
           >
             {copied === "link" ? <CheckIcon /> : <CopyIcon />}
             <span>Copy</span>

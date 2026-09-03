@@ -16,6 +16,18 @@
   }
 }
 
+:root {
+  --font-display: "Patrick Hand", cursive, sans-serif;
+}
+
+* {
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+
 @layer components {
   /* Sharp, hairline-bordered panel — matches the reference screenshots */
   .panel {
