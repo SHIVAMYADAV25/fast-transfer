@@ -23,6 +23,17 @@ import { DEFAULT_ICE_SERVERS } from "@fast-transfer/protocol";
 
 export const MAX_PARALLEL_CONNECTIONS = 4;
 
+/**
+ * Auto-picks a connection count based on total transfer size, so parallel
+ * mode doesn't have to be a manual checkbox. Small files skip the extra
+ * ICE/DTLS handshake overhead since it wouldn't be amortized.
+ */
+export function chooseConnectionCount(totalBytes: number): number {
+  if (totalBytes < 8 * 1024 * 1024) return 1;    // <8MB: not worth parallel overhead
+  if (totalBytes < 64 * 1024 * 1024) return 2;   // 8-64MB
+  return MAX_PARALLEL_CONNECTIONS;               // 64MB+: full 4x
+}
+
 export interface ParallelConnectionsResult {
   peers: PeerConnection[];
   channels: RTCDataChannel[];
