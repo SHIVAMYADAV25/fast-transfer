@@ -1,3 +1,4 @@
+// apps/web/app/page.tsx
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,7 +26,7 @@ import type { StoredManifest } from "@fast-transfer/protocol";
 import { formatBytes } from "@/lib/format";
 
 type SendPhase = "idle" | "waiting" | "connecting" | "sending" | "reconnecting" | "done" | "error";
-type ReceivePhase = "idle" | "connecting" | "receiving" | "reconnecting" | "done" | "error";
+type ReceivePhase = "idle" | "connecting" | "receiving" | "verifying" | "reconnecting" | "done" | "error";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://getfasttransfer.app";
 const RECONNECT_BACKOFF_MS = [1000, 2000, 4000];
@@ -40,11 +41,260 @@ function waitForConfig(signaling: SignalingClient, fallback: number, timeoutMs: 
   );
 }
 
+// export default function HomePage() {
+//   const [turnOverride, setTurnOverride] = useState<TurnOverride | null>(null);
+
+//   return (
+//   <main className="relative min-h-screen w-full overflow-hidden  text-[#1a1a1a]">
+//       <div className="fixed inset-0 -z-10 pointer-events-none">
+//         <img
+//           src="/handdrawn-bg.png"
+//           alt=""
+//           draggable={false}
+//           className="h-full w-full object-cover"
+//         />
+//       </div>
+//       <div className="mx-auto max-w-5xl z-10">
+//         <header className="mb-8">
+//           <h1 className="text-3xl font-bold tracking-tight">
+//             fast-transfer<span className="text-muted">.</span>
+//           </h1>
+//           <p className="mt-1 text-sm text-muted">
+//             Direct browser-to-browser file transfer. Encrypted end-to-end. Nothing touches our servers.
+//           </p>
+//         </header>
+
+//         <div className="grid gap-6 border-none bg-transparent p-0 sm:grid-cols-2">
+//           <div className=" border-none sm:border-b-0 sm:border-r">
+//             <SendPanel turnOverride={turnOverride} />
+//           </div>
+//           <div className=" border-0">
+//             <ReceivePanel turnOverride={turnOverride} />
+//           </div>
+//         </div>
+
+//         {/* <div className="mt-4">
+//           <RelaySettings value={turnOverride} onChange={setTurnOverride} />
+//         </div> */}
+
+//         <footer className="mt-4 flex items-center justify-between text-[11px] text-muted">
+//           <span>Signaling only. Files travel peer-to-peer via WebRTC.</span>
+//           <span>
+//             {turnOverride ? "Custom TURN configured for this session." : "STUN only — no relay fallback by default."}
+//           </span>
+//         </footer>
+//       </div>
+//     </main> 
+//   );
+// }
+
+
+// Flying Butterfly Component
+function FlyingButterfly() {
+  const [key, setKey] = useState(0);
+  const [lastExitPoint, setLastExitPoint] = useState<{ x: number; y: number } | null>(null);
+  const [flightConfig, setFlightConfig] = useState<any>(null);
+
+  useEffect(() => {
+    // Helper to generate a random edge coordinate
+    const getRandomEdgeCoords = () => {
+      const edge = Math.floor(Math.random() * 4);
+      switch (edge) {
+        case 0: return { x: Math.random() * 80 + 10, y: -10 }; // Top
+        case 1: return { x: 110, y: Math.random() * 80 + 10 };  // Right
+        case 2: return { x: Math.random() * 80 + 10, y: 110 }; // Bottom
+        case 3: return { x: -10, y: Math.random() * 80 + 10 };  // Left
+        default: return { x: -10, y: -10 };
+      }
+    };
+
+    // 1. Entry point: Uses the last exit point if available; otherwise picks a random edge
+    const start = lastExitPoint || getRandomEdgeCoords();
+
+    // 2. Pick a new random exit edge (ensuring it's not starting and ending at the exact same spot)
+    let end = getRandomEdgeCoords();
+
+    // 3. Generate completely random wandering waypoints across the screen (not restricted to flowers)
+    const wanderSpot1 = { x: Math.random() * 70 + 15, y: Math.random() * 60 + 20 };
+    const wanderSpot2 = { x: Math.random() * 70 + 15, y: Math.random() * 60 + 20 };
+    const wanderSpot3 = { x: Math.random() * 70 + 15, y: Math.random() * 60 + 20 };
+
+    // Save current exit point for the NEXT flight cycle
+    setLastExitPoint(end);
+
+    // Compute rotation angles towards each random point
+    const calcAngle = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+      const radians = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      return Math.round((radians * 180) / Math.PI) + 90;
+    };
+
+    const angle1 = calcAngle(start, wanderSpot1);
+    const angle2 = calcAngle(wanderSpot1, wanderSpot2);
+    const angle3 = calcAngle(wanderSpot2, wanderSpot3);
+    const angle4 = calcAngle(wanderSpot3, end);
+
+    const duration = Math.floor(Math.random() * 6) + 18; // Smooth 18s - 24s flight path
+
+    setFlightConfig({
+      start,
+      end,
+      wanderSpot1,
+      wanderSpot2,
+      wanderSpot3,
+      angle1,
+      angle2,
+      angle3,
+      angle4,
+      duration,
+    });
+  }, [key]);
+
+  // Rest pause between flight cycles
+  const handleAnimationEnd = () => {
+    const pauseDelay = Math.floor(Math.random() * 6000) + 4000; // 4 to 10 seconds break
+    setTimeout(() => {
+      setKey((prev) => prev + 1);
+    }, pauseDelay);
+  };
+
+  if (!flightConfig) return null;
+
+  return (
+    <>
+      <style>{`
+        /* Dynamic wing flapping speed: Fast during flight, slow during resting pause */
+        @keyframes flapLeft {
+          0%, 100% { transform: scaleX(1); }
+          50% { transform: scaleX(0.15); }
+        }
+
+        @keyframes flapRight {
+          0%, 100% { transform: scaleX(1); }
+          50% { transform: scaleX(0.15); }
+        }
+
+        .butterfly-left-wing {
+          transform-origin: 20px 18px;
+          animation: flapLeft 0.18s ease-in-out infinite;
+        }
+
+        .butterfly-right-wing {
+          transform-origin: 20px 18px;
+          animation: flapRight 0.18s ease-in-out infinite;
+        }
+
+        /* Smooth wandering flight path with resting pauses */
+        @keyframes dynamicFlightPath_${key} {
+          0% {
+            top: ${flightConfig.start.y}%;
+            left: ${flightConfig.start.x}%;
+            transform: rotate(${flightConfig.angle1}deg) scale(0.85);
+          }
+          20% {
+            top: ${flightConfig.wanderSpot1.y}%;
+            left: ${flightConfig.wanderSpot1.x}%;
+            transform: rotate(${flightConfig.angle1}deg) scale(1);
+          }
+          /* Hover & pause at point 1 */
+          28% {
+            top: ${flightConfig.wanderSpot1.y + 1}%;
+            left: ${flightConfig.wanderSpot1.x - 1}%;
+            transform: rotate(${flightConfig.angle2 - 10}deg) scale(0.95);
+          }
+          48% {
+            top: ${flightConfig.wanderSpot2.y}%;
+            left: ${flightConfig.wanderSpot2.x}%;
+            transform: rotate(${flightConfig.angle2}deg) scale(0.9);
+          }
+          /* Gentle flutter pause at point 2 */
+          54% {
+            top: ${flightConfig.wanderSpot2.y - 2}%;
+            left: ${flightConfig.wanderSpot2.x + 1}%;
+            transform: rotate(${flightConfig.angle3 + 10}deg) scale(1);
+          }
+          75% {
+            top: ${flightConfig.wanderSpot3.y}%;
+            left: ${flightConfig.wanderSpot3.x}%;
+            transform: rotate(${flightConfig.angle3}deg) scale(0.95);
+          }
+          82% {
+            top: ${flightConfig.wanderSpot3.y + 1}%;
+            left: ${flightConfig.wanderSpot3.x + 2}%;
+            transform: rotate(${flightConfig.angle4}deg) scale(0.9);
+          }
+          100% {
+            top: ${flightConfig.end.y}%;
+            left: ${flightConfig.end.x}%;
+            transform: rotate(${flightConfig.angle4}deg) scale(0.8);
+          }
+        }
+
+        .dynamic-butterfly {
+          position: absolute;
+          z-index: 20;
+          pointer-events: none;
+          width: 36px;
+          height: 36px;
+          animation: dynamicFlightPath_${key} ${flightConfig.duration}s ease-in-out forwards;
+        }
+      `}</style>
+
+      {/* Rendered Butterfly */}
+      <div
+        key={key}
+        className="dynamic-butterfly"
+        onAnimationEnd={handleAnimationEnd}
+      >
+        <svg
+          width="36"
+          height="36"
+          viewBox="0 0 40 40"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <defs>
+            <filter id="butterflyFilter" x="-10%" y="-10%" width="120%" height="120%">
+              <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="2" result="noise" />
+              <feDisplacementMap in="SourceGraphic" in2="noise" scale="1" xChannelSelector="R" yChannelSelector="G" />
+            </filter>
+            <pattern id="wingPattern" width="3" height="3" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <line x1="0" y1="0" x2="0" y2="3" stroke="#1c1c1e" strokeWidth="0.7" opacity="0.25" />
+            </pattern>
+          </defs>
+
+          <g filter="url(#butterflyFilter)">
+            {/* Left Wing */}
+            <g className="butterfly-left-wing">
+              <path d="M 20 18 C 10 3, 1 7, 3 16 C 5 22, 15 20, 20 18 Z" fill="#FAFAFA" stroke="#1c1c1e" strokeWidth="1.6" />
+              <path d="M 18 17 C 11 7, 4 10, 6 16 C 8 19, 15 18, 18 17 Z" fill="url(#wingPattern)" stroke="#1c1c1e" strokeWidth="0.7" />
+              <path d="M 19 19 C 10 21, 5 27, 9 31 C 13 33, 18 25, 19 19 Z" fill="#FAFAFA" stroke="#1c1c1e" strokeWidth="1.4" />
+            </g>
+
+            {/* Right Wing */}
+            <g className="butterfly-right-wing">
+              <path d="M 20 18 C 30 3, 39 7, 37 16 C 35 22, 25 20, 20 18 Z" fill="#FAFAFA" stroke="#1c1c1e" strokeWidth="1.6" />
+              <path d="M 22 17 C 29 7, 36 10, 34 16 C 32 19, 25 18, 22 17 Z" fill="url(#wingPattern)" stroke="#1c1c1e" strokeWidth="0.7" />
+              <path d="M 21 19 C 30 21, 35 27, 31 31 C 27 33, 22 25, 21 19 Z" fill="#FAFAFA" stroke="#1c1c1e" strokeWidth="1.4" />
+            </g>
+
+            {/* Body */}
+            <ellipse cx="20" cy="19" rx="1.2" ry="5.5" fill="#1c1c1e" />
+            <circle cx="20" cy="13" r="1" fill="#1c1c1e" />
+            <path d="M 20 13 C 18 9, 15 8, 13 9" stroke="#1c1c1e" strokeWidth="0.8" fill="none" />
+            <path d="M 20 13 C 22 9, 25 8, 27 9" stroke="#1c1c1e" strokeWidth="0.8" fill="none" />
+          </g>
+        </svg>
+      </div>
+    </>
+  );
+}
+
 export default function HomePage() {
   const [turnOverride, setTurnOverride] = useState<TurnOverride | null>(null);
 
   return (
-  <main className="relative min-h-screen w-full overflow-hidden  text-[#1a1a1a]">
+    <main className="relative min-h-screen w-full overflow-hidden text-[#1a1a1a]">
+      {/* Background Image */}
       <div className="fixed inset-0 -z-10 pointer-events-none">
         <img
           src="/handdrawn-bg.png"
@@ -53,7 +303,11 @@ export default function HomePage() {
           className="h-full w-full object-cover"
         />
       </div>
-      <div className="mx-auto max-w-5xl z-10">
+
+      {/* Dynamic Flying Butterfly Effect */}
+      <FlyingButterfly />
+
+      <div className="mx-auto max-w-5xl z-10 relative">
         <header className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">
             fast-transfer<span className="text-muted">.</span>
@@ -64,17 +318,13 @@ export default function HomePage() {
         </header>
 
         <div className="grid gap-6 border-none bg-transparent p-0 sm:grid-cols-2">
-          <div className=" border-none sm:border-b-0 sm:border-r">
+          <div className="border-none sm:border-b-0 sm:border-r">
             <SendPanel turnOverride={turnOverride} />
           </div>
-          <div className=" border-0">
+          <div className="border-0">
             <ReceivePanel turnOverride={turnOverride} />
           </div>
         </div>
-
-        {/* <div className="mt-4">
-          <RelaySettings value={turnOverride} onChange={setTurnOverride} />
-        </div> */}
 
         <footer className="mt-4 flex items-center justify-between text-[11px] text-muted">
           <span>Signaling only. Files travel peer-to-peer via WebRTC.</span>
@@ -83,7 +333,7 @@ export default function HomePage() {
           </span>
         </footer>
       </div>
-    </main> 
+    </main>
   );
 }
 
@@ -423,6 +673,7 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const peersRef = useRef<PeerConnection[]>([]);
+  const channelsRef = useRef<RTCDataChannel[]>([]);
   const statsRef = useRef<StatsMonitor | null>(null);
   const timingRef = useRef<{ start: number; end: number; peakBps: number }>({
     start: 0,
@@ -441,7 +692,13 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
     totalBytes: number;
   } | null>(null);
   const reconnectAttemptRef = useRef(0);
-  const terminalRef = useRef(false); // set once done/error, so a late connection-state event doesn't trigger a pointless reconnect
+  const terminalRef = useRef(false); // set once done/error/cancelled, so a late connection-state event or in-flight callback doesn't trigger a pointless reconnect or overwrite the UI after the user already left
+  const abortControllerRef = useRef<AbortController | null>(null); // lets us stop an in-flight sendFiles() promptly on cancel instead of it hanging or resolving late
+  const phaseRef = useRef<SendPhase>("idle"); // mirrors `phase` for use inside stable callbacks (e.g. the signaling close handler) that shouldn't go stale
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   const cleanup = useCallback(() => {
     statsRef.current?.stop();
@@ -449,6 +706,7 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
     signalingRef.current?.close();
     statsRef.current = null;
     peersRef.current = [];
+    channelsRef.current = [];
     signalingRef.current = null;
   }, []);
 
@@ -460,6 +718,7 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
     setPhase("waiting");
     reconnectAttemptRef.current = 0;
     terminalRef.current = false;
+    abortControllerRef.current = new AbortController();
     const totalBytes = files.reduce((s, f) => s + f.size, 0);
     resumeRef.current = {
       remainingFiles: files,
@@ -490,10 +749,23 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
             setPhase("error");
           }
         });
+        // The signaling WebSocket can die silently while we're just sitting
+        // on the "waiting for recipient" screen (idle connections get
+        // dropped by proxies/NATs without a close frame) — this is what
+        // made "click send, wait a bit, then have the receiver enter the
+        // code" fail with no explanation. Only auto-recover here while we
+        // haven't paired yet; once WebRTC takes over, a dead peer
+        // connection is handled by onConnectionStateChange below instead.
+        client.onClose(() => {
+          if (terminalRef.current) return;
+          if (phaseRef.current !== "waiting") return;
+          void attemptReconnect();
+        });
       };
 
       const runTransfer = (channels: RTCDataChannel[], primaryPeer: PeerConnection) => {
         setPhase("sending");
+        channelsRef.current = channels;
         if (timingRef.current.start === 0) {
           timingRef.current = { start: performance.now(), end: 0, peakBps: 0 };
         }
@@ -522,6 +794,7 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
           checkpoint.remainingFiles,
           {
             onProgress: (p) => {
+              if (terminalRef.current) return; // cancelled/finished already — don't resurrect a stale progress bar
               setProgress(p);
               timingRef.current.peakBps = Math.max(timingRef.current.peakBps, p.ratePerSec);
             },
@@ -532,11 +805,19 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
               checkpoint.remainingFiles = checkpoint.remainingFiles.slice(1);
             },
             onAllComplete: () => {
+              if (terminalRef.current) return;
               terminalRef.current = true;
               timingRef.current.end = performance.now();
               setPhase("done");
             },
             onError: (msg) => {
+              // cancel() already flips terminalRef + phase synchronously —
+              // this callback firing afterwards (the abort unwinding through
+              // sendFiles' catch block) must not clobber that with an
+              // "error" state appearing after the fact. That's what made
+              // Cancel feel broken: the button worked immediately, but a
+              // stray late error overwrote the UI a moment later.
+              if (terminalRef.current) return;
               terminalRef.current = true;
               setError(msg);
               setPhase("error");
@@ -548,6 +829,7 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
             bytesAlreadySent: checkpoint.bytesAlreadySent,
           },
           maxMessageSize,
+          abortControllerRef.current?.signal,
         );
       };
 
@@ -667,6 +949,24 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   };
 
   const cancel = () => {
+    // Order matters: flip terminalRef *before* aborting/cleaning up, so any
+    // callback still unwinding from the in-flight sendFiles() promise sees
+    // it and no-ops instead of overwriting the UI a moment later (that
+    // delayed-looking "cancel didn't do anything, then something changes"
+    // behavior was exactly this ordering bug).
+    terminalRef.current = true;
+    abortControllerRef.current?.abort();
+    // Best-effort: tell the receiver right away instead of letting them
+    // sit there until their own stall timeout fires.
+    if (channelsRef.current[0]?.readyState === "open") {
+      try {
+        channelsRef.current[0].send(
+          JSON.stringify({ type: "CANCEL", reason: "The sender cancelled the transfer." }),
+        );
+      } catch {
+        // best effort only
+      }
+    }
     cleanup();
     setPhase("idle");
     setCode(null);
@@ -981,6 +1281,11 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   const reconnectAttemptRef = useRef(0);
   const terminalRef = useRef(false);
   const lastActivityRef = useRef(Date.now());
+  const phaseRef = useRef<ReceivePhase>("idle"); // mirrors `phase` for use inside stable callbacks (e.g. the signaling close handler) that shouldn't go stale
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   const cleanup = useCallback(() => {
     statsRef.current?.stop();
@@ -995,7 +1300,7 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
 
   const STALL_TIMEOUT_MS = 45_000;
   useEffect(() => {
-    if (phase !== "connecting" && phase !== "receiving" && phase !== "reconnecting") return;
+    if (phase !== "connecting" && phase !== "receiving" && phase !== "verifying" && phase !== "reconnecting") return;
     lastActivityRef.current = Date.now();
     const interval = setInterval(() => {
       if (terminalRef.current) return;
@@ -1081,23 +1386,50 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
       signalingRef.current = signaling;
       await signaling.connect();
 
+      // Same rationale as the sender side: an idle signaling socket can die
+      // silently mid-handshake (waiting on CONFIG / the offer) without ever
+      // firing a close event. Only step in here, before a peer connection
+      // exists — once WebRTC is up, onConnectionStateChange below owns
+      // recovery.
+      signaling.onClose(() => {
+        if (terminalRef.current) return;
+        if (phaseRef.current !== "connecting") return;
+        void attemptReconnect();
+      });
+
       receiverRef.current = new FileReceiver({
         onProgress: (p) => {
+          if (terminalRef.current) return;
           lastActivityRef.current = Date.now();
           setPhase((prev) => (prev === "done" ? prev : "receiving"));
           setProgress(p);
           timingRef.current.peakBps = Math.max(timingRef.current.peakBps, p.ratePerSec);
+        },
+        onVerifying: () => {
+          if (terminalRef.current) return;
+          // All bytes are in — reassembling + hashing a large file takes
+          // real, visible time. Without this the UI just sat at 100% with
+          // nothing changing, which looked exactly like a frozen/failed
+          // download even though it was working.
+          lastActivityRef.current = Date.now();
+          setPhase("verifying");
         },
         onFileComplete: (file) => {
           setReceivedFile(file);
           downloadFile(file);
         },
         onAllComplete: () => {
+          if (terminalRef.current) return;
           terminalRef.current = true;
           timingRef.current.end = performance.now();
           setPhase("done");
         },
         onError: (msg) => {
+          // See the matching comment in SendPanel's cancel(): terminalRef
+          // is set synchronously by cancel() before anything async unwinds,
+          // so a cancellation-triggered error arriving here is expected and
+          // must not overwrite the "idle" state the user already sees.
+          if (terminalRef.current) return;
           terminalRef.current = true;
           setError(msg);
           setPhase("error");
@@ -1179,6 +1511,11 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
             setPhase("error");
             return;
           }
+          signaling.onClose(() => {
+            if (terminalRef.current) return;
+            if (phaseRef.current !== "connecting") return;
+            void attemptReconnect();
+          });
         }
         void establishAndListen();
       };
@@ -1191,6 +1528,11 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   };
 
   const cancel = () => {
+    // Same ordering fix as SendPanel: flip terminalRef before tearing
+    // anything down so a callback still unwinding from an in-flight
+    // handleMessage/finishCurrentFile call sees it and no-ops.
+    terminalRef.current = true;
+    receiverRef.current?.notifyCancel("The receiver cancelled the transfer.");
     cleanup();
     setPhase("idle");
     setProgress(null);
@@ -1266,6 +1608,22 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
             fileIndex={progress.fileIndex}
             totalFiles={progress.totalFiles}
           />
+        </div>
+      )}
+
+      {phase === "verifying" && (
+        <div className="mt-4 space-y-2">
+          <ConnectionStatus connectionType={connStats.type} rttMs={connStats.rttMs} />
+          <p className="text-xs font-medium text-[#625e55]">
+            All bytes received — verifying file integrity…
+          </p>
+          <IndeterminateBar />
+          {progress && (
+            <p className="text-[11px] font-medium text-[#625e55]">
+              {formatBytes(progress.totalBytes)} received. This can take a moment on large files —
+              it isn't stuck.
+            </p>
+          )}
         </div>
       )}
 
