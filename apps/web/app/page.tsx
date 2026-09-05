@@ -436,7 +436,7 @@ function PencilTextureCanvas() {
   );
 }
 
-export function ModeTabs({ storeMode, setStoreMode, disabled }: ModeTabsProps) {
+function ModeTabs({ storeMode, setStoreMode, disabled }: ModeTabsProps) {
   return (
     <div className="mb-3 w-full">
       {/* Rough edge displacement filter */}
@@ -535,7 +535,7 @@ interface SketchedBackgroundProps {
   className?: string;
 }
 
-export function SketchedBackground({ mode = "light", className = "" }: SketchedBackgroundProps) {
+function SketchedBackground({ mode = "light", className = "" }: SketchedBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -1833,7 +1833,7 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
 // Small shared bits
 // ---------------------------------------------------------------------------
 
-export function IndeterminateBar() {
+function IndeterminateBar() {
   return (
     <div className="relative h-1 w-full overflow-hidden rounded-[3px] bg-[#eae7df]">
       {/* Smooth border */}

@@ -1,8 +1,10 @@
+// apps/web/lib/webrtc/transfer.ts
 "use client";
 
 import type { FileMetadata } from "@fast-transfer/protocol";
 import { AdaptiveWindowController } from "./adaptive";
 import { createHasher } from "./hash";
+import { toFriendlyError } from "./errors";
 
 /**
  * Minimal RTCDataChannel surface required by this transfer module.
@@ -125,6 +127,140 @@ export interface TransferProgress {
   windowBytes?: number;
 }
 
+type ControlMessage =
+  | {
+      type: "BATCH_INFO";
+      totalFiles: number;
+      totalBytes: number;
+    }
+  | {
+      type: "FILE_METADATA";
+      meta: FileMetadata;
+    }
+  | {
+      type: "RESUME_QUERY";
+      fileId: string;
+    }
+  | {
+      type: "RESUME_STATUS";
+      fileId: string;
+      receivedIndexes: number[];
+    }
+  | {
+      type: "CANCEL";
+      reason?: string;
+    }
+  | {
+      type: "TRANSFER_COMPLETE";
+      fileId: string;
+      sha256?: string;
+    };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function parseControlMessage(data: string): ControlMessage | null {
+  let value: unknown;
+
+  try {
+    value = JSON.parse(data) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return null;
+  }
+
+  switch (value.type) {
+    case "BATCH_INFO":
+      if (
+        isFiniteNumber(value.totalFiles) &&
+        isFiniteNumber(value.totalBytes) &&
+        value.totalFiles >= 0 &&
+        value.totalBytes >= 0
+      ) {
+        return {
+          type: "BATCH_INFO",
+          totalFiles: value.totalFiles,
+          totalBytes: value.totalBytes,
+        };
+      }
+      return null;
+
+    case "FILE_METADATA": {
+      const meta = value.meta;
+      if (!isRecord(meta)) return null;
+
+      if (
+        typeof meta.fileId !== "string" ||
+        typeof meta.name !== "string" ||
+        !isFiniteNumber(meta.size) ||
+        !isFiniteNumber(meta.chunkSize) ||
+        !isFiniteNumber(meta.totalChunks)
+      ) {
+        return null;
+      }
+
+      return {
+        type: "FILE_METADATA",
+        meta: meta as unknown as FileMetadata,
+      };
+    }
+
+    case "RESUME_QUERY":
+      return typeof value.fileId === "string"
+        ? { type: "RESUME_QUERY", fileId: value.fileId }
+        : null;
+
+    case "RESUME_STATUS":
+      if (
+        typeof value.fileId === "string" &&
+        Array.isArray(value.receivedIndexes) &&
+        value.receivedIndexes.every(
+          (index): index is number =>
+            typeof index === "number" &&
+            Number.isInteger(index) &&
+            index >= 0,
+        )
+      ) {
+        return {
+          type: "RESUME_STATUS",
+          fileId: value.fileId,
+          receivedIndexes: value.receivedIndexes,
+        };
+      }
+      return null;
+
+    case "CANCEL":
+      return {
+        type: "CANCEL",
+        ...(typeof value.reason === "string"
+          ? { reason: value.reason }
+          : {}),
+      };
+
+    case "TRANSFER_COMPLETE":
+      if (typeof value.fileId !== "string") return null;
+
+      return {
+        type: "TRANSFER_COMPLETE",
+        fileId: value.fileId,
+        ...(typeof value.sha256 === "string"
+          ? { sha256: value.sha256 }
+          : {}),
+      };
+
+    default:
+      return null;
+  }
+}
+
 export interface TransferCallbacks {
   onMetadata?: (meta: FileMetadata) => void;
   onProgress?: (progress: TransferProgress) => void;
@@ -132,6 +268,59 @@ export interface TransferCallbacks {
   onFileFullySent?: (fileIndex: number) => void;
   onAllComplete?: () => void;
   onError?: (message: string) => void;
+  /**
+   * Fired on the receiver right after 100% of a file's bytes have arrived,
+   * before hash verification (which can take a real, visible amount of time
+   * on large files — reassembling + SHA-256'ing a multi-GB blob is not
+   * instant). Without this the UI has nothing to show between "100%
+   * received" and the download actually starting, which reads as frozen.
+   */
+  onVerifying?: (fileName: string) => void;
+}
+
+/**
+ * Raw substring the browser throws when its internal SCTP send queue is
+ * momentarily full — this is normal backpressure, not a fatal error, and is
+ * retried by safeSend() below rather than surfaced to the user.
+ */
+const SEND_QUEUE_FULL_PATTERN = /send queue is full/i;
+
+/**
+ * Backoff schedule for retrying a send() that hit a full send queue.
+ */
+const SEND_RETRY_DELAYS_MS = [20, 50, 120, 250, 500, 1000, 1500, 2000];
+
+/**
+ * send() that survives the browser's "RTCDataChannel send queue is full"
+ * error. That error is thrown synchronously by the browser when its
+ * internal SCTP send queue — a separate, lower-level limit than the
+ * `bufferedAmount` this module already backs off against — is momentarily
+ * saturated. It's transient backpressure, not a broken connection, so the
+ * right response is a short wait and a retry, not failing the whole
+ * transfer (which is what was happening before, and exactly why users saw
+ * this raw browser error surface as a fatal one).
+ */
+async function safeSend(
+  channel: TransferDataChannel,
+  data: string | ArrayBuffer,
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      channel.send(data);
+      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        !SEND_QUEUE_FULL_PATTERN.test(message) ||
+        attempt >= SEND_RETRY_DELAYS_MS.length
+      ) {
+        throw err;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, SEND_RETRY_DELAYS_MS[attempt]),
+      );
+    }
+  }
 }
 
 /**
@@ -279,12 +468,48 @@ export async function sendFiles(
     bytesAlreadySent: number;
   },
   maxMessageSize?: number | null,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (channels.length === 0) {
     throw new Error("sendFiles needs at least one open channel");
   }
 
   const rate = new RateMeter();
+  const controlChannel = channels[0]!;
+
+  /**
+   * Cooperative cancellation. Two things can trigger it:
+   *   - the caller aborting `signal` (local "Cancel send" click)
+   *   - a CANCEL control message arriving from the receiver (they clicked
+   *     "Cancel receive")
+   * Either way we stop promptly instead of continuing to blast chunks into
+   * a channel nobody's listening to anymore.
+   */
+  let cancelled = false;
+  let cancelledByPeer = false;
+  let cancelReason = "Transfer cancelled.";
+  let resolveCancelled: (() => void) | null = null;
+  const cancelledPromise = new Promise<void>((resolve) => {
+    resolveCancelled = resolve;
+  });
+  const triggerCancel = (reason: string, byPeer: boolean) => {
+    if (cancelled) return;
+    cancelled = true;
+    cancelledByPeer = byPeer;
+    cancelReason = reason;
+    resolveCancelled?.();
+  };
+  if (signal) {
+    if (signal.aborted) {
+      triggerCancel("Transfer cancelled.", false);
+    } else {
+      signal.addEventListener(
+        "abort",
+        () => triggerCancel("Transfer cancelled.", false),
+        { once: true },
+      );
+    }
+  }
 
   const fileCountOffset = batchOverride
     ? batchOverride.totalFiles - files.length
@@ -314,7 +539,8 @@ export async function sendFiles(
     /**
      * Tell receiver the true batch shape.
      */
-    channels[0].send(
+    await safeSend(
+      controlChannel,
       JSON.stringify({
         type: "BATCH_INFO",
         totalFiles: totalFilesReported,
@@ -336,23 +562,33 @@ export async function sendFiles(
       }
 
       try {
-        const msg = JSON.parse(event.data);
+        const msg = parseControlMessage(event.data);
+
+        if (!msg) {
+          return;
+        }
 
         if (msg.type === "RESUME_STATUS") {
-          const resolver =
-            pendingResumeReplies.get(msg.fileId);
+          const resolver = pendingResumeReplies.get(msg.fileId);
 
           if (resolver) {
-            resolver(msg.receivedIndexes ?? []);
+            resolver(msg.receivedIndexes);
             pendingResumeReplies.delete(msg.fileId);
           }
+        }
+
+        if (msg.type === "CANCEL") {
+          triggerCancel(
+            msg.reason || "The receiver cancelled the transfer.",
+            true,
+          );
         }
       } catch {
         // Ignore malformed control messages.
       }
     };
 
-    channels[0].addEventListener(
+    controlChannel.addEventListener(
       "message",
       onControlMessage,
     );
@@ -371,12 +607,17 @@ export async function sendFiles(
           resolve(indexes);
         });
 
-        channels[0].send(
+        safeSend(
+          controlChannel,
           JSON.stringify({
             type: "RESUME_QUERY",
             fileId,
           }),
-        );
+        ).catch(() => {
+          clearTimeout(timeout);
+          pendingResumeReplies.delete(fileId);
+          resolve([]);
+        });
       });
     };
 
@@ -384,6 +625,8 @@ export async function sendFiles(
      * Process files sequentially.
      */
     for (let i = 0; i < files.length; i++) {
+      if (cancelled) break;
+
       const file = files[i];
 
       const fileIndex = i + fileCountOffset;
@@ -404,7 +647,8 @@ export async function sendFiles(
       /**
        * FILE_METADATA is safe to resend.
        */
-      channels[0].send(
+      await safeSend(
+        controlChannel,
         JSON.stringify({
           type: "FILE_METADATA",
           meta,
@@ -468,6 +712,8 @@ export async function sendFiles(
             idx < totalChunks;
             idx++
           ) {
+            if (cancelled) break;
+
             const start = idx * CHUNK_SIZE;
 
             const slice = file.slice(
@@ -505,19 +751,25 @@ export async function sendFiles(
       const consumers = channels.map(
         (channel, channelIdx) =>
           (async () => {
-            const window = windows[channelIdx];
+            const window = windows[channelIdx]!;
 
             for await (const {
               index,
               bytes,
             } of queues[channelIdx]) {
+              if (cancelled) break;
+
               await waitForBufferSpace(
                 channel,
                 window.getWindow(),
                 window.getLowWatermark(),
+                cancelledPromise,
               );
 
-              channel.send(
+              if (cancelled) break;
+
+              await safeSend(
+                channel,
                 frameChunk(index, bytes),
               );
 
@@ -565,12 +817,17 @@ export async function sendFiles(
         ...consumers,
       ]);
 
+      if (cancelled) {
+        throw new Error(cancelReason);
+      }
+
       /**
        * Hash is now complete.
        */
       const sha256 = hasher.digestHex();
 
-      channels[0].send(
+      await safeSend(
+        controlChannel,
         JSON.stringify({
           type: "TRANSFER_COMPLETE",
           fileId: meta.fileId,
@@ -581,18 +838,22 @@ export async function sendFiles(
       callbacks.onFileFullySent?.(fileIndex);
     }
 
-    callbacks.onAllComplete?.();
+    if (!cancelled) {
+      callbacks.onAllComplete?.();
+    }
   } catch (err) {
-    const message =
+    const rawMessage =
       err instanceof Error
         ? err.message
         : "transfer failed";
+    const message = toFriendlyError(rawMessage);
 
     /**
-     * Best-effort cancellation notification.
+     * Best-effort cancellation notification — skip it if this cancellation
+     * came FROM the receiver in the first place, no need to echo it back.
      */
-    try {
-      channels[0]?.send(
+    if (!cancelledByPeer) try {
+      controlChannel.send(
         JSON.stringify({
           type: "CANCEL",
           reason: message,
@@ -605,7 +866,7 @@ export async function sendFiles(
     callbacks.onError?.(message);
   } finally {
     if (onControlMessage) {
-      channels[0].removeEventListener(
+      controlChannel.removeEventListener(
         "message",
         onControlMessage,
       );
@@ -621,6 +882,7 @@ function waitForBufferSpace(
   channel: TransferDataChannel,
   highWaterMark: number,
   lowWaterMark: number,
+  cancelledPromise?: Promise<void>,
 ): Promise<void> {
   if (
     channel.bufferedAmount <=
@@ -646,6 +908,17 @@ function waitForBufferSpace(
       "bufferedamountlow",
       onLow,
     );
+
+    // Don't hang forever waiting for room if the transfer got cancelled
+    // while we were blocked here.
+    cancelledPromise?.then(() => {
+      channel.removeEventListener(
+        "bufferedamountlow",
+        onLow,
+      );
+
+      resolve();
+    });
   });
 }
 
@@ -683,10 +956,7 @@ export class FileReceiver {
    * This can happen in parallel mode when channel 1/2/3
    * delivers before channel 0.
    */
-  private pendingChunks = new Map<
-    number,
-    Uint8Array
-  >();
+  private pendingChunks = new Map<number, Uint8Array>();
 
   /**
    * Channel 0 used for control replies.
@@ -716,6 +986,21 @@ export class FileReceiver {
   }
 
   /**
+   * Best-effort notification to the sender that the receiver cancelled —
+   * called from the UI's "Cancel receive" handler. Safe to call even if no
+   * control channel is open yet (e.g. cancelled before connecting).
+   */
+  notifyCancel(reason: string): void {
+    try {
+      this.controlChannel?.send(
+        JSON.stringify({ type: "CANCEL", reason }),
+      );
+    } catch {
+      // Best effort only — the channel may already be gone.
+    }
+  }
+
+  /**
    * Handle either JSON control data or binary chunks.
    */
   handleMessage(
@@ -725,13 +1010,11 @@ export class FileReceiver {
      * JSON/control message.
      */
     if (typeof data === "string") {
-      let msg: any;
+      const msg = parseControlMessage(data);
 
-      try {
-        msg = JSON.parse(data);
-      } catch {
+      if (!msg) {
         this.callbacks.onError?.(
-          "Invalid control message received.",
+          toFriendlyError("Invalid control message received."),
         );
         return;
       }
@@ -740,11 +1023,8 @@ export class FileReceiver {
        * Batch information.
        */
       if (msg.type === "BATCH_INFO") {
-        this.totalFiles =
-          msg.totalFiles;
-
-        this.totalBytesAllFiles =
-          msg.totalBytes;
+        this.totalFiles = msg.totalFiles;
+        this.totalBytesAllFiles = msg.totalBytes;
 
         return;
       }
@@ -753,8 +1033,7 @@ export class FileReceiver {
        * File metadata.
        */
       if (msg.type === "FILE_METADATA") {
-        const meta =
-          msg.meta as FileMetadata;
+        const meta = msg.meta;
 
         /**
          * Same file announced again during resume.
@@ -817,11 +1096,8 @@ export class FileReceiver {
         msg.type === "RESUME_QUERY"
       ) {
         const receivedIndexes =
-          this.currentMeta?.fileId ===
-          msg.fileId
-            ? this.chunks.reduce<
-                number[]
-              >(
+          this.currentMeta?.fileId === msg.fileId
+            ? this.chunks.reduce<number[]>(
                 (acc, chunk, index) => {
                   if (chunk) {
                     acc.push(index);
@@ -833,13 +1109,17 @@ export class FileReceiver {
               )
             : [];
 
-        this.controlChannel?.send(
-          JSON.stringify({
-            type: "RESUME_STATUS",
-            fileId: msg.fileId,
-            receivedIndexes,
-          }),
-        );
+        try {
+          this.controlChannel?.send(
+            JSON.stringify({
+              type: "RESUME_STATUS",
+              fileId: msg.fileId,
+              receivedIndexes,
+            }),
+          );
+        } catch {
+          // Best effort only — the control channel may already be gone.
+        }
 
         return;
       }
@@ -859,15 +1139,13 @@ export class FileReceiver {
       /**
        * File finished.
        */
-      if (
-        msg.type ===
-        "TRANSFER_COMPLETE"
-      ) {
-        void this.finishCurrentFile(
-          msg.sha256 as
-            | string
-            | undefined,
-        );
+      if (msg.type === "TRANSFER_COMPLETE") {
+        const meta = this.currentMeta;
+        if (!meta || meta.fileId !== msg.fileId) {
+          return;
+        }
+
+        void this.finishCurrentFile(msg.sha256);
 
         return;
       }
@@ -907,7 +1185,9 @@ export class FileReceiver {
       this.currentMeta.totalChunks
     ) {
       this.callbacks.onError?.(
-        `Invalid chunk index ${index} for file with ${this.currentMeta.totalChunks} chunks.`,
+        toFriendlyError(
+          `Invalid chunk index ${index} for file with ${this.currentMeta.totalChunks} chunks.`,
+        ),
       );
 
       return;
@@ -974,23 +1254,36 @@ export class FileReceiver {
     }
 
     /**
-     * TRANSFER_COMPLETE can arrive slightly before
-     * the final parallel channel's data.
+     * TRANSFER_COMPLETE can arrive slightly before the final chunk(s),
+     * especially in parallel mode where channels finish at slightly
+     * different times, or on a slow/jittery link. A single fixed 500ms
+     * wait was too short for that — it's exactly what made big transfers
+     * look "stuck at 100%" on the receiver even though the sender had
+     * already finished and the rest of the data was still in flight. Poll
+     * instead of a one-shot wait, and give it a real window before giving
+     * up.
      */
-    if (
-      this.chunksReceived <
-      this.currentMeta.totalChunks
-    ) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, 500),
-      );
+    const totalChunks = this.currentMeta.totalChunks;
+    const COMPLETION_POLL_MS = 200;
+    const COMPLETION_MAX_WAIT_MS = 8000;
+    if (this.chunksReceived < totalChunks) {
+      const deadline =
+        performance.now() + COMPLETION_MAX_WAIT_MS;
 
-      if (
-        this.chunksReceived <
-        this.currentMeta.totalChunks
+      while (
+        this.chunksReceived < totalChunks &&
+        performance.now() < deadline
       ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, COMPLETION_POLL_MS),
+        );
+      }
+
+      if (this.chunksReceived < totalChunks) {
         this.callbacks.onError?.(
-          `Transfer incomplete: received ${this.chunksReceived}/${this.currentMeta.totalChunks} chunks.`,
+          toFriendlyError(
+            `Transfer incomplete: received ${this.chunksReceived}/${totalChunks} chunks.`,
+          ),
         );
 
         return;
@@ -1007,12 +1300,23 @@ export class FileReceiver {
     ) {
       if (!this.chunks[i]) {
         this.callbacks.onError?.(
-          `Transfer incomplete: missing chunk ${i}.`,
+          toFriendlyError(
+            `Transfer incomplete: missing chunk ${i}.`,
+          ),
         );
 
         return;
       }
     }
+
+    /**
+     * All bytes are in. Reassembling + hashing a large file is not
+     * instant — tell the UI so it can show "Verifying…" instead of
+     * looking frozen at 100%.
+     */
+    this.callbacks.onVerifying?.(
+      this.currentMeta.name,
+    );
 
     /**
      * Reassemble in chunk-index order.
@@ -1048,7 +1352,9 @@ export class FileReceiver {
 
       if (hex !== sha256) {
         this.callbacks.onError?.(
-          "HASH_MISMATCH: received file does not match sender's hash",
+          toFriendlyError(
+            "HASH_MISMATCH: received file does not match sender's hash",
+          ),
         );
 
         return;

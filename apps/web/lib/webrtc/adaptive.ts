@@ -1,3 +1,4 @@
+// apps/web/lib/webrtc/adaptive.ts
 "use client";
 
 /**
@@ -17,9 +18,19 @@
  * for every network. A proper CC algorithm is future work, not MVP scope.
  */
 
-const MIN_WINDOW = 1 * 1024 * 1024; // 1 MiB floor
-const MAX_WINDOW = 64 * 1024 * 1024; // 64 MiB ceiling
-const START_WINDOW = 4 * 1024 * 1024; // conservative starting point, per PRD §17 example
+/**
+ * Ceiling was originally 64 MiB. In practice, `RTCDataChannel.bufferedAmount`
+ * lags behind reality by enough that a hill-climbing window this large lets
+ * the send loop fire far more `send()` calls than the browser's internal
+ * SCTP send queue can actually hold, which is what threw
+ * "Failed to execute 'send' on 'RTCDataChannel': RTCDataChannel send queue
+ * is full" so often. Keeping the window well under that internal limit (plus
+ * the retry/backoff in transfer.ts's safeSend for the rest) is the real fix
+ * — 64 MiB was never a safe number to grow into.
+ */
+const MIN_WINDOW = 256 * 1024; // 256 KiB floor
+const MAX_WINDOW = 4 * 1024 * 1024; // 4 MiB ceiling — safe headroom under the browser's real limit
+const START_WINDOW = 512 * 1024; // conservative starting point
 
 const GROW_FACTOR = 1.5;
 const BACKOFF_FACTOR = 0.6;
