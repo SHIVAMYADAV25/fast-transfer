@@ -128,16 +128,16 @@ export function CodeDisplay({ code, browserLink }: CodeDisplayProps) {
   return (
     <div className="space-y-3 font-sans text-[#2c2c2e]">
       {/* Top Row: Code Box & Actions */}
-      <div className="flex items-center justify-between text-xs sm:text-sm">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2.5 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-2 sm:text-sm">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-[#272727] font-medium">Use this code:</span>
-          <span className="rounded-md border border-dashed border-[#2b2b2b]/30 bg-transparent px-4 py-[6px] font-mono text-sm font-bold text-[#272727]">
+          <span className="rounded-md border border-dashed border-[#2b2b2b]/30 bg-transparent px-3 sm:px-4 py-[6px] font-mono text-xs sm:text-sm font-bold text-[#272727] break-all">
             {code}
           </span>
           <button
             type="button"
             onClick={() => copy(code, "code")}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-[#2b2b2b]/30 bg-transparent hover:bg-[#f0ece1] transition-colors"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[#2b2b2b]/30 bg-transparent hover:bg-[#f0ece1] transition-colors"
             aria-label="Copy code"
           >
             {copied === "code" ? <CheckIcon /> : <CopyIcon />}
@@ -147,7 +147,7 @@ export function CodeDisplay({ code, browserLink }: CodeDisplayProps) {
         {/* Send text instead - Underlined Link style as in image 2 */}
         <button
           type="button"
-          className="flex items-center gap-1.5 text-xs text-[#2c2c2e] hover:opacity-80 transition-opacity"
+          className="flex items-center gap-1.5 self-start text-xs text-[#2c2c2e] hover:opacity-80 transition-opacity sm:self-auto"
         >
           <SpeechBubbleIcon />
           <span className="underline underline-offset-2">Send text instead</span>

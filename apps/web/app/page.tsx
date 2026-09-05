@@ -386,6 +386,9 @@ const PaperAirplaneIcon = ({ size = 32 }: { size?: number }) => {
 
 export default function HomePage() {
   const [turnOverride, setTurnOverride] = useState<TurnOverride | null>(null);
+  // Mobile only: which panel (Send/Receive) is currently shown. On sm+ screens
+  // both panels are shown side-by-side as before, this only matters below sm.
+  const [mobileView, setMobileView] = useState<"send" | "receive">("send");
 
   return (
     <main className="relative min-h-screen w-full overflow-hidden text-[#1a1a1a]">
@@ -402,24 +405,29 @@ export default function HomePage() {
       {/* Dynamic Flying Butterfly Effect */}
       <FlyingButterfly />
 
-      <div className="mx-auto max-w-5xl z-10 relative pt-4">
-        <header className="mb-2 flex items-center justify-between">
+      <div className="mx-auto max-w-5xl z-10 relative pt-4 px-4 sm:px-6 lg:px-8">
+        <header className="mb-2 flex items-center justify-between gap-2">
   {/* Left side: Logo + Text + Sparkle */}
   <div className="flex items-center gap-1">
-    <PaperAirplaneIcon size={52} />
+    <span className="sm:hidden">
+      <PaperAirplaneIcon size={36} />
+    </span>
+    <span className="hidden sm:inline-flex">
+      <PaperAirplaneIcon size={52} />
+    </span>
 
     <div className="flex items-center">
-      <span className="text-3xl font-semibold tracking-[-0.03em] text-[#595858]">
+      <span className="text-2xl sm:text-3xl font-semibold tracking-[-0.03em] text-[#595858]">
         kimo
       </span>
 
       {/* Sparkle burst */}
       <svg
-        width="28"
-        height="32"
+        width="22"
+        height="26"
         viewBox="0 0 28 32"
         fill="none"
-        className="ml-0.5 mt-1 shrink-0"
+        className="ml-0.5 mt-1 shrink-0 sm:h-8 sm:w-7"
         aria-hidden="true"
       >
         <path d="M 6 7 L 12 3" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
@@ -434,7 +442,7 @@ export default function HomePage() {
   </div>
 
   {/* Right side: Hand-drawn style navigation with dividers */}
-  <nav className="flex items-center gap-3 text-[#575656]">
+  <nav className="flex shrink-0 items-center gap-1.5 sm:gap-3 text-[#575656]">
     {/* Open Book (Tutorials) Icon */}
     <a
       href="/tutorials"
@@ -442,7 +450,7 @@ export default function HomePage() {
       aria-label="Tutorials"
     >
       <svg
-        className="h-5 w-5"
+        className="h-4 w-4 sm:h-5 sm:w-5"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -475,7 +483,7 @@ export default function HomePage() {
       aria-label="Blog / Info"
     >
       <svg
-        className="h-5 w-5"
+        className="h-4 w-4 sm:h-5 sm:w-5"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -505,7 +513,7 @@ export default function HomePage() {
       className="transition-opacity hover:opacity-70"
       aria-label="X (Twitter)"
     >
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+      <svg className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="currentColor">
         <path d="M 18.2 3 L 21.5 3 L 14.3 11.2 L 22.8 21 L 16.2 21 L 11 14.2 L 5 21 L 1.7 21 L 9.4 12.2 L 1.2 3 L 8 3 L 12.7 9.2 L 18.2 3 Z M 17.1 19.5 L 18.9 19.5 L 7.1 4.4 L 5.1 4.4 L 17.1 19.5 Z" />
       </svg>
     </a>
@@ -524,7 +532,7 @@ export default function HomePage() {
       aria-label="LinkedIn"
     >
       <svg
-        className="h-6 w-6"
+        className="h-5 w-5 sm:h-6 sm:w-6"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -568,11 +576,24 @@ export default function HomePage() {
 
 
 <div className="mx-auto max-w-5xl mb-3">
+  {/* Mobile-only Send/Receive toggle — replaces the stacked layout below sm */}
+  <MobileViewToggle view={mobileView} setView={setMobileView} />
+
   {/* Set a min-height or fixed height so the panel has space to push buttons down */}
-  <div className="relative grid min-h-[650px] items-stretch gap-8 border-none bg-transparent p-0 sm:grid-cols-2">
+  {/* grid-cols-1 (== repeat(1, minmax(0,1fr))) is required below sm: without it,
+      an implicit auto-sized grid track is used, which is allowed to grow past
+      the container's width to fit any long unwrapped content inside (the
+      browser link, the code chip, etc.) — that's what was dragging the whole
+      column, and every full-width row inside it, off the right edge of the
+      screen on mobile. */}
+  <div className="relative grid min-h-0 grid-cols-1 sm:min-h-[650px] items-stretch gap-6 sm:gap-8 border-none bg-transparent p-0 sm:grid-cols-2">
     
     {/* Left Column Container */}
-    <div className="flex h-full flex-col justify-between pr-2 sm:pr-6">
+    <div
+      className={`h-full min-w-0 flex-col justify-between sm:pr-6 ${
+        mobileView === "send" ? "flex" : "hidden"
+      } sm:flex`}
+    >
       <SendPanel turnOverride={turnOverride} />
     </div>
 
@@ -597,7 +618,11 @@ export default function HomePage() {
     </div>
 
     {/* Right Column Container */}
-    <div className="flex h-full flex-col justify-between pl-2 sm:pl-6">
+    <div
+      className={`h-full min-w-0 flex-col justify-between sm:pl-6 ${
+        mobileView === "receive" ? "flex" : "hidden"
+      } sm:flex`}
+    >
       <ReceivePanel turnOverride={turnOverride} />
     </div>
 
@@ -619,6 +644,84 @@ interface ModeTabsProps {
   storeMode: boolean;
   setStoreMode: (mode: boolean) => void;
   disabled?: boolean;
+}
+
+interface MobileViewToggleProps {
+  view: "send" | "receive";
+  setView: (view: "send" | "receive") => void;
+}
+
+// Small-screen only segmented control that swaps between the Send and
+// Receive panels instead of stacking them top/bottom. Both panels stay
+// mounted (just hidden via CSS) so in-progress transfers are never reset
+// by switching tabs. Hidden entirely at sm+ where the two-column layout
+// already shows both panels side by side.
+function MobileViewToggle({ view, setView }: MobileViewToggleProps) {
+  return (
+    <div className="mb-4 w-full sm:hidden">
+      <div className="flex h-11 w-full overflow-hidden rounded-md border-2 border-[#dcdbdb] bg-transparent">
+        <button
+          type="button"
+          onClick={() => setView("send")}
+          className={`relative flex flex-1 items-center justify-center gap-1.5 text-sm font-bold transition-all cursor-pointer ${
+            view !== "send" ? "text-[#101010] hover:bg-[#101010]/5" : "text-white"
+          }`}
+        >
+          {view === "send" && (
+            <div
+              className="absolute inset-0 z-0 h-full w-full overflow-hidden"
+              style={{ filter: "url(#pencil-rough)" }}
+            >
+              <PencilTextureCanvas />
+            </div>
+          )}
+          <span
+            className="relative z-10 flex items-center gap-1.5"
+            style={
+              view === "send"
+                ? {
+                    textShadow:
+                      "1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000",
+                  }
+                : undefined
+            }
+          >
+            <UploadIcon color={view === "send" ? "#fff" : "#3B3B3C"} /> Send
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setView("receive")}
+          className={`relative flex flex-1 items-center justify-center gap-1.5 text-sm font-bold transition-all cursor-pointer ${
+            view !== "receive" ? "text-[#101010] hover:bg-[#101010]/5" : "text-white"
+          }`}
+        >
+          {view === "receive" && (
+            <div
+              className="absolute inset-0 z-0 h-full w-full overflow-hidden"
+              style={{ filter: "url(#pencil-rough)" }}
+            >
+              <PencilTextureCanvas />
+            </div>
+          )}
+          <span
+            className="relative z-10 flex items-center gap-1.5"
+            style={
+              view === "receive"
+                ? {
+                    textShadow:
+                      "1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000",
+                  }
+                : undefined
+            }
+          >
+            <DownloadIcon color={view === "receive" ? "#fff" : "#3B3B3C"} /> Receive
+          </span>
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function PencilTextureCanvas() {
@@ -822,13 +925,22 @@ function SketchedBackground({ mode = "light", className = "" }: SketchedBackgrou
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const w = (canvas.width = rect.width || 460);
-    const h = (canvas.height = rect.height || 48);
+    // Redraws the sketch texture at the canvas's *current* rendered box size.
+    // Re-running this on resize (not just on mount / mode change) is what
+    // keeps the border and corner registration marks pixel-accurate — if the
+    // box's width changes after the initial paint (e.g. a layout reflow, an
+    // orientation change, or a viewport resize) without this, the old
+    // fixed-resolution texture gets stretched by the browser to fill the new
+    // box size, which is what made the corner marks appear to drift outside
+    // the button edge.
+    const draw = () => {
+      const rect = canvas.getBoundingClientRect();
+      const w = (canvas.width = rect.width || 460);
+      const h = (canvas.height = rect.height || 48);
 
-    ctx.clearRect(0, 0, w, h);
+      ctx.clearRect(0, 0, w, h);
 
-    if (mode === "dark") {
+      if (mode === "dark") {
       // Dark Active State
       ctx.fillStyle = "#121212";
       ctx.fillRect(0, 0, w, h);
@@ -917,6 +1029,13 @@ function SketchedBackground({ mode = "light", className = "" }: SketchedBackgrou
     drawX(w - 10, 10);
     drawX(10, h - 10);
     drawX(w - 10, h - 10);
+    };
+
+    draw();
+
+    const observer = new ResizeObserver(() => draw());
+    observer.observe(canvas);
+    return () => observer.disconnect();
   }, [mode]);
 
   return (
