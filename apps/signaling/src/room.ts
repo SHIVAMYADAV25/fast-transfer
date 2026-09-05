@@ -1,3 +1,4 @@
+// apps/signaling/src/room.ts
 /**
  * TransferRoom — one Durable Object instance per active transfer room.
  *
@@ -129,6 +130,14 @@ export class TransferRoom {
 
     const role = this.roleOf(ws);
     if (!role) return;
+
+    // Heartbeat: answered directly, never forwarded to the other peer.
+    if (parsed.type === "PING") {
+      const room = await this.loadRoom();
+      this.send(ws, { type: "PONG", roomId: room?.roomId ?? parsed.roomId });
+      return;
+    }
+
     const other = role === "sender" ? "receiver" : "sender";
     const target = this.sockets[other];
 
