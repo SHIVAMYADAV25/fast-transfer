@@ -635,6 +635,8 @@ export default function HomePage() {
             {turnOverride ? "Custom TURN configured for this session." : "STUN only — no relay fallback by default."}
           </span>
         </footer> */}
+
+        
       </div>
     </main>
   );
@@ -842,7 +844,7 @@ function ModeTabs({ storeMode, setStoreMode, disabled }: ModeTabsProps) {
       </svg>
 
       {/* Segmented Outer Shell */}
-      <div className="flex h-11 w-full overflow-hidden rounded-md border-2 border-[#dcdbdb] bg-transparent">
+      <div className="flex h-11 w-full overflow-visible rounded-md border-2 border-[#dcdbdb] bg-transparent">
         {/* Direct Button */}
         <button
           type="button"
@@ -875,37 +877,45 @@ function ModeTabs({ storeMode, setStoreMode, disabled }: ModeTabsProps) {
           </span>
         </button>
 
-        {/* Store for 1 day Button */}
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setStoreMode(true)}
-          className={`relative flex flex-1 items-center justify-center text-sm font-bold transition-all ${
-            disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-          } ${storeMode ? "text-white" : "text-[#101010] hover:bg-[#101010]/5"}`}
-        >
-          {storeMode && (
-            <div
-              className="absolute inset-0 z-0 h-full w-full overflow-hidden"
-              style={{ filter: "url(#pencil-rough)" }}
-            >
-              <PencilTextureCanvas />
-            </div>
-          )}
-          <span
-            className="relative z-10"
-            style={
-              storeMode
-                ? {
-                    textShadow:
-                      "1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000",
-                  }
-                : undefined
-            }
-          >
-            Store for 1 day
-          </span>
-        </button>
+<button
+  type="button"
+  disabled={disabled}
+  onClick={() => setStoreMode(true)}
+  className={`relative flex flex-1 items-center justify-center overflow-visible text-sm font-bold transition-all ${
+    disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+  } ${storeMode ? "text-white" : "text-[#101010] hover:bg-[#101010]/5"}`}
+>
+{/* Sitting Character - Shifted Right */}
+<img
+  src="/sitting-character.png"
+  alt=""
+  draggable={false}
+  className="pointer-events-none absolute -top-[72px] left-[90%] z-20 h-28 w-auto -translate-x-1/2 select-none sm:hidden"
+/>
+
+  {storeMode && (
+    <div
+      className="absolute inset-0 z-0 h-full w-full overflow-hidden"
+      style={{ filter: "url(#pencil-rough)" }}
+    >
+      <PencilTextureCanvas />
+    </div>
+  )}
+
+  <span
+    className="relative z-10"
+    style={
+      storeMode
+        ? {
+            textShadow:
+              "1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000",
+          }
+        : undefined
+    }
+  >
+    Store for 1 day
+  </span>
+</button>
       </div>
     </div>
   );
@@ -1647,6 +1657,16 @@ return (
         </button>
       )}
     </div>
+
+    <div className="mt-2 w-full sm:hidden">
+      <img
+        src="/best-cat.png" // replace with your image path
+        alt=""
+        draggable={false}
+        className="w-full h-auto object-contain pointer-events-none select-none"
+      />
+    </div>
+
   </div>
 );
 }
@@ -1969,24 +1989,35 @@ return (
 
       {/* Code Input Field */}
       <div className="mb-2">
-        <label className="mb-2 mt-3 block text-[12px] font-thin uppercase tracking-wider text-[#6e6a61]">
-          Code
-        </label>
-        <div className="relative rounded-[6px] bg-[#f4f2eb]/70 p-1">
-          <div>
-            <div className="pointer-events-none absolute inset-0 rounded-md border border-[#2b2b2b]/30" />
+  <label className="mb-2 mt-3 block text-[12px] font-thin uppercase tracking-wider text-[#6e6a61]">
+    Code
+  </label>
+  
+  {/* Relative wrapper with explicit overflow-visible */}
+  <div className="relative z-0 overflow-visible rounded-[6px] bg-[#f4f2eb]/70 p-1">
+    
+    {/* Sleeping Cat Image - Higher Z-Index & Clean Positioning */}
+    <img
+      src="/sleeping-cat.png"
+      alt=""
+      draggable={false}
+      className="pointer-events-none absolute -top-[36px] right-3 z-30 h-12 w-auto select-none sm:hidden"
+    />
 
-            <input
-              className="relative z-10 h-8 w-full rounded-md bg-transparent px-2 text-[12px] font-normal text-[#101010] outline-none placeholder:font-normal placeholder:text-[#9c9b98] disabled:opacity-50"
-              placeholder="word-word-word or a stored link"
-              value={codeInput}
-              disabled={anyLocked}
-              onChange={(e) => setCodeInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && startReceive()}
-            />
-          </div>
-        </div>
-      </div>
+    <div className="relative">
+      <div className="pointer-events-none absolute inset-0 rounded-md border border-[#2b2b2b]/30" />
+
+      <input
+        className="relative z-10 h-8 w-full rounded-md bg-transparent px-2 text-[12px] font-normal text-[#101010] outline-none placeholder:font-normal placeholder:text-[#9c9b98] disabled:opacity-50"
+        placeholder="word-word-word or a stored link"
+        value={codeInput}
+        disabled={anyLocked}
+        onChange={(e) => setCodeInput(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && startReceive()}
+      />
+    </div>
+  </div>
+</div>
       <p className="m-1 text-[12px] font-medium leading-5 text-[#494946]">
         Paste a live code (word-word-word) or a stored transfer link, then press Enter or select Receive.
       </p>
