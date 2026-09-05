@@ -288,6 +288,101 @@ function FlyingButterfly() {
     </>
   );
 }
+const PaperAirplaneIcon = ({ size = 32 }: { size?: number }) => {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      style={{ overflow: "visible" }}
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      <defs>
+        <filter
+          id="kimo-pencil-sketch"
+          x="-20%"
+          y="-20%"
+          width="140%"
+          height="140%"
+        >
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.04"
+            numOctaves="3"
+            result="noise"
+          />
+
+          <feDisplacementMap
+            in="SourceGraphic"
+            in2="noise"
+            scale="2.5"
+            xChannelSelector="R"
+            yChannelSelector="G"
+          />
+
+          <feMorphology
+            operator="dilate"
+            radius="0.3"
+            in="SourceGraphic"
+          />
+        </filter>
+      </defs>
+
+      <g filter="url(#kimo-pencil-sketch)">
+        <g
+          stroke="#575656"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          {/* Top wing */}
+          <path
+            d="M30 46 L85 32"
+            strokeWidth="3"
+          />
+
+          {/* Main right wing */}
+          <path
+            d="M85 32 L60 72"
+            strokeWidth="3"
+          />
+
+          {/* Bottom wing fold */}
+          <path
+            d="M60 72 L42 54"
+            strokeWidth="2.5"
+          />
+
+          {/* Back edge */}
+          <path
+            d="M30 46 L42 54"
+            strokeWidth="3"
+          />
+
+          {/* Center spine */}
+          <path
+            d="M85 32 L42 54"
+            strokeWidth="2.5"
+          />
+
+          {/* Curved back flap */}
+          <path
+            d="M42 54 C40 64 46 68 50 63"
+            strokeWidth="2.5"
+          />
+
+          {/* Flight trail */}
+          <path
+            d="M26 74 L36 67"
+            strokeWidth="2.5"
+            strokeDasharray="4 4"
+          />
+        </g>
+      </g>
+    </svg>
+  );
+};
 
 export default function HomePage() {
   const [turnOverride, setTurnOverride] = useState<TurnOverride | null>(null);
@@ -307,31 +402,214 @@ export default function HomePage() {
       {/* Dynamic Flying Butterfly Effect */}
       <FlyingButterfly />
 
-      <div className="mx-auto max-w-5xl z-10 relative">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">
-            fast-transfer<span className="text-muted">.</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            Direct browser-to-browser file transfer. Encrypted end-to-end. Nothing touches our servers.
-          </p>
-        </header>
+      <div className="mx-auto max-w-5xl z-10 relative pt-4">
+        <header className="mb-2 flex items-center justify-between">
+  {/* Left side: Logo + Text + Sparkle */}
+  <div className="flex items-center gap-1">
+    <PaperAirplaneIcon size={52} />
 
-        <div className="grid gap-6 border-none bg-transparent p-0 sm:grid-cols-2">
-          <div className="border-none sm:border-b-0 sm:border-r">
-            <SendPanel turnOverride={turnOverride} />
-          </div>
-          <div className="border-0">
-            <ReceivePanel turnOverride={turnOverride} />
-          </div>
-        </div>
+    <div className="flex items-center">
+      <span className="text-3xl font-semibold tracking-[-0.03em] text-[#595858]">
+        kimo
+      </span>
 
-        <footer className="mt-4 flex items-center justify-between text-[11px] text-muted">
+      {/* Sparkle burst */}
+      <svg
+        width="28"
+        height="32"
+        viewBox="0 0 28 32"
+        fill="none"
+        className="ml-0.5 mt-1 shrink-0"
+        aria-hidden="true"
+      >
+        <path d="M 6 7 L 12 3" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M 11 12 L 18 9" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M 12 17 L 20 17" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M 11 22 L 18 25" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M 6 26 L 11 30" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+        <circle cx="23" cy="12" r="1" fill="#575656" />
+        <circle cx="22" cy="22" r="1" fill="#575656" />
+      </svg>
+    </div>
+  </div>
+
+  {/* Right side: Hand-drawn style navigation with dividers */}
+  <nav className="flex items-center gap-3 text-[#575656]">
+    {/* Open Book (Tutorials) Icon */}
+    <a
+      href="/tutorials"
+      className="transition-opacity hover:opacity-70"
+      aria-label="Tutorials"
+    >
+      <svg
+        className="h-5 w-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {/* Left page outline */}
+        <path d="M12 6.5C10 4.8 6.5 4.5 3 6v12.5c3.5-1.2 7-.9 9 .8" />
+        {/* Right page outline */}
+        <path d="M12 6.5C14 4.8 17.5 4.5 21 6v12.5c-3.5-1.2-7-.9-9 .8" />
+        {/* Book spine line */}
+        <path d="M12 6.5v12.8" />
+        {/* Text lines on left page */}
+        <path d="M5.5 9h4M5.5 12h4M5.5 15h3" strokeWidth="1.5" />
+        {/* Text lines on right page */}
+        <path d="M14.5 9h4M14.5 12h4M14.5 15h3" strokeWidth="1.5" />
+      </svg>
+    </a>
+
+    {/* Hand-Drawn Bar Divider */}
+    <svg width="6" height="18" viewBox="0 0 6 18" fill="none" className="shrink-0">
+      <path d="M 3 1.5 C 2.8 6, 3.2 12, 3 16.5" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+
+    {/* Hand-Drawn "i" (Blog / Info) Icon */}
+    <a
+      href="/blog"
+      className="transition-opacity hover:opacity-70"
+      aria-label="Blog / Info"
+    >
+      <svg
+        className="h-5 w-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {/* Outer Circle */}
+        <path d="M12 21c4.97 0 9-4.03 9-9s-4.03-9-9-9-9 4.03-9 9 4.03 9 9 9z" />
+        {/* Hand-drawn 'i' dot */}
+        <circle cx="12" cy="8" r="1.2" fill="currentColor" />
+        {/* Hand-drawn 'i' body stem */}
+        <path d="M12 11.5v5.5" strokeWidth="2.2" />
+      </svg>
+    </a>
+
+    {/* Hand-Drawn Bar Divider */}
+    <svg width="6" height="18" viewBox="0 0 6 18" fill="none" className="shrink-0">
+      <path d="M 3 1.5 C 3.2 5.5, 2.8 11.5, 3 16.5" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+
+    {/* Hand-Drawn Double-Line X (Twitter) Icon */}
+    <a
+      href="https://x.com/shivamdotdev"
+      target="_blank"
+      rel="noreferrer"
+      className="transition-opacity hover:opacity-70"
+      aria-label="X (Twitter)"
+    >
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M 18.2 3 L 21.5 3 L 14.3 11.2 L 22.8 21 L 16.2 21 L 11 14.2 L 5 21 L 1.7 21 L 9.4 12.2 L 1.2 3 L 8 3 L 12.7 9.2 L 18.2 3 Z M 17.1 19.5 L 18.9 19.5 L 7.1 4.4 L 5.1 4.4 L 17.1 19.5 Z" />
+      </svg>
+    </a>
+
+    {/* Hand-Drawn Bar Divider */}
+    <svg width="6" height="18" viewBox="0 0 6 18" fill="none" className="shrink-0">
+      <path d="M 3 1.5 C 2.9 6, 3.1 12, 3 16.5" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+
+    {/* Hand-Drawn Rounded Box "in" (LinkedIn) Icon */}
+    <a
+      href="https://www.linkedin.com/in/shivamdotdev"
+      target="_blank"
+      rel="noreferrer"
+      className="transition-opacity hover:opacity-70"
+      aria-label="LinkedIn"
+    >
+      <svg
+        className="h-6 w-6"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {/* Hand-drawn rounded square frame */}
+        <rect x="3.5" y="3.5" width="17" height="17" rx="4" />
+        {/* 'i' dot */}
+        <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" />
+        {/* 'i' stem */}
+        <path d="M8 11v6" strokeWidth="2" />
+        {/* 'n' stem and arch */}
+        <path d="M12.5 11v6" strokeWidth="2" />
+        <path d="M12.5 13.8c0-1.5 1-2.3 2.2-2.3s2.3.8 2.3 2.3V17" strokeWidth="2" />
+      </svg>
+    </a>
+  </nav>
+</header>
+
+{/* Hand-Drawn Pencil Divider (Ultra-thin & light taper) */}
+<div className="mb-5 w-full overflow-hidden" aria-hidden="true">
+  <svg
+    viewBox="0 0 1000 10"
+    fill="none"
+    preserveAspectRatio="none"
+    className="h-2 w-full"
+  >
+    {/* Very light & delicate single pencil line tapered from ~0.4px ends to ~1.4px center */}
+    <path
+      d="M 5 5 C 250 4.2, 750 5.8, 995 5"
+      fill="none"
+      stroke="#575656"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+      opacity="0.35"
+    />
+  </svg>
+</div>
+
+
+<div className="mx-auto max-w-5xl mb-3">
+  {/* Set a min-height or fixed height so the panel has space to push buttons down */}
+  <div className="relative grid min-h-[650px] items-stretch gap-8 border-none bg-transparent p-0 sm:grid-cols-2">
+    
+    {/* Left Column Container */}
+    <div className="flex h-full flex-col justify-between pr-2 sm:pr-6">
+      <SendPanel turnOverride={turnOverride} />
+    </div>
+
+    {/* Center Divider Line */}
+    <div
+      className="absolute inset-y-0 left-1/2 hidden -translate-x-1/2 sm:block"
+      aria-hidden="true"
+    >
+      <svg
+        viewBox="0 0 10 100"
+        preserveAspectRatio="none"
+        className="h-full w-2"
+      >
+        <path
+          d="M 5 1 C 4.2 25, 5.8 75, 5 99"
+          stroke="#575656"
+          strokeWidth="1.2"
+          strokeLinecap="round"
+          opacity="0.35"
+        />
+      </svg>
+    </div>
+
+    {/* Right Column Container */}
+    <div className="flex h-full flex-col justify-between pl-2 sm:pl-6">
+      <ReceivePanel turnOverride={turnOverride} />
+    </div>
+
+  </div>
+</div>
+
+        {/* <footer className="mt-4 flex items-center justify-between text-[11px] text-muted">
           <span>Signaling only. Files travel peer-to-peer via WebRTC.</span>
           <span>
             {turnOverride ? "Custom TURN configured for this session." : "STUN only — no relay fallback by default."}
           </span>
-        </footer>
+        </footer> */}
       </div>
     </main>
   );
@@ -1004,28 +1282,30 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   const isLocked = phase !== "idle";
   const isStoreLocked = storePhase !== "idle";
 
-  return (
-    <div className="flex h-full flex-col">
-<div className="mb-4 flex items-center gap-3">
-  <IconBox>
-    <UploadIcon />
-  </IconBox>
-  <div className="flex flex-col justify-center leading-snug mt-2">
-    <h2 className="text-xl font-bold text-[#575656] leading-none [word-spacing:0.5rem] mb-2 ml-2">
-      Send
-    </h2>
-    <p className="text-xs font-medium text-[#555555] leading-snug ml-2">
-      Choose several files. Share one croc code.
-    </p>
-  </div>
-</div>
+return (
+  <div className="flex h-full flex-col justify-between">
+    {/* TOP CONTENT WRAPPER */}
+    <div className="flex-1">
+      <div className="mb-4 flex items-center gap-3">
+        <IconBox>
+          <UploadIcon />
+        </IconBox>
+        <div className="mt-2 flex flex-col justify-center leading-snug">
+          <h2 className="mb-2 ml-2 text-xl font-bold text-[#575656] leading-none [word-spacing:0.5rem]">
+            Send
+          </h2>
+          <p className="ml-2 text-xs font-medium text-[#555555] leading-snug">
+            Choose several files. Share one croc code.
+          </p>
+        </div>
+      </div>
 
       {/* Direct / Store tabs */}
       <ModeTabs
-  storeMode={storeMode}
-  setStoreMode={setStoreMode}
-  disabled={isLocked || isStoreLocked}
-/>
+        storeMode={storeMode}
+        setStoreMode={setStoreMode}
+        disabled={isLocked || isStoreLocked}
+      />
 
       {storeMode && (
         <p className="mb-3 text-[11px] text-muted">
@@ -1169,81 +1449,87 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
           )}
         </>
       )}
-
-<div className="mt-auto pt-6">
-  {storeMode ? (
-    !isStoreLocked ? (
-      <button
-        type="button"
-        onClick={startStoreSend}
-        disabled={files.length === 0}
-        className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
-      >
-        <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
-          <SketchedBackground mode={files.length > 0 ? "dark" : "light"} />
-        </div>
-        <span className="relative z-10 flex items-center gap-2" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}>
-          <UploadIcon /> Upload &amp; get link
-        </span>
-      </button>
-    ) : storePhase === "done" ? (
-      <button
-        type="button"
-        onClick={() => {
-          setStorePhase("idle");
-          setStoreResult(null);
-          setFiles([]);
-        }}
-        className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
-      >
-        <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
-          <SketchedBackground mode="outline" />
-        </div>
-        <span className="relative z-10">New store transfer</span>
-      </button>
-    ) : (
-      <button
-        type="button"
-        disabled
-        className="relative flex h-12 w-full items-center justify-center font-bold text-white cursor-not-allowed"
-      >
-        <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
-          <SketchedBackground mode="dark" />
-        </div>
-        <span className="relative z-10" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}>Uploading…</span>
-      </button>
-    )
-  ) : !isLocked ? (
-    <button
-      type="button"
-      onClick={startSend}
-      disabled={files.length === 0}
-      className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
-    >
-      <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
-        <SketchedBackground mode={files.length > 0 ? "dark" : "light"} />
-      </div>
-      <span className="relative z-10 flex items-center gap-2" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}>
-        <UploadIcon color="#fff"/> Send file
-      </span>
-    </button>
-  ) : (
-    <button
-      type="button"
-      onClick={cancel}
-      className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
-    >
-      <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
-        <SketchedBackground mode="outline" />
-      </div>
-      <span className="relative z-10 flex items-center gap-2">
-         Cancel send
-      </span>
-    </button>
-  )}
-</div>
     </div>
-  );
+
+    {/* BOTTOM BUTTON CONTAINER */}
+    <div className="mt-auto pt-6">
+      <p className="mb-2 text-[11px] text-[#6e6a61]">
+        Signaling only. Files travel peer-to-peer via WebRTC.
+      </p>
+
+      {storeMode ? (
+        !isStoreLocked ? (
+          <button
+            type="button"
+            onClick={startStoreSend}
+            disabled={files.length === 0}
+            className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
+          >
+            <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
+              <SketchedBackground mode={files.length > 0 ? "dark" : "light"} />
+            </div>
+            <span className="relative z-10 flex items-center gap-2" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}>
+              <UploadIcon color="#fff"/> Upload &amp; get link
+            </span>
+          </button>
+        ) : storePhase === "done" ? (
+          <button
+            type="button"
+            onClick={() => {
+              setStorePhase("idle");
+              setStoreResult(null);
+              setFiles([]);
+            }}
+            className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
+          >
+            <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
+              <SketchedBackground mode="outline" />
+            </div>
+            <span className="relative z-10">New store transfer</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="relative flex h-12 w-full items-center justify-center font-bold text-white cursor-not-allowed"
+          >
+            <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
+              <SketchedBackground mode="dark" />
+            </div>
+            <span className="relative z-10" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}>Uploading…</span>
+          </button>
+        )
+      ) : !isLocked ? (
+        <button
+          type="button"
+          onClick={startSend}
+          disabled={files.length === 0}
+          className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
+        >
+          <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
+            <SketchedBackground mode={files.length > 0 ? "dark" : "light"} />
+          </div>
+          <span className="relative z-10 flex items-center gap-2" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}>
+            <UploadIcon color="#fff"/> Send file
+          </span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={cancel}
+          className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
+        >
+          <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
+            <SketchedBackground mode="outline" />
+          </div>
+          <span className="relative z-10 flex items-center gap-2">
+             Cancel send
+          </span>
+        </button>
+      )}
+    </div>
+  </div>
+);
 }
 
 // ---------------------------------------------------------------------------
@@ -1543,8 +1829,10 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   const isStoreLocked = storePhase !== "idle";
   const anyLocked = isLocked || isStoreLocked;
 
-  return (
-    <div className="flex h-full flex-col">
+return (
+  <div className="flex h-full flex-col justify-between">
+    {/* TOP CONTENT WRAPPER */}
+    <div className="flex-1">
       {/* Header — Matched to SendPanel */}
       <div className="mb-4 flex items-center gap-3">
         <IconBox>
@@ -1567,22 +1855,20 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
         </label>
         <div className="relative rounded-[6px] bg-[#f4f2eb]/70 p-1">
           <div>
-  <div
-    className="pointer-events-none absolute inset-0 rounded-md border border-[#2b2b2b]/30"
-  />
+            <div className="pointer-events-none absolute inset-0 rounded-md border border-[#2b2b2b]/30" />
 
-  <input
-    className="relative z-10 h-8 w-full rounded-md bg-transparent px-2 text-[12px] font-normal text-[#101010] outline-none placeholder:font-normal placeholder:text-[#9c9b98] disabled:opacity-50"
-    placeholder="word-word-word or a stored link"
-    value={codeInput}
-    disabled={anyLocked}
-    onChange={(e) => setCodeInput(e.target.value)}
-    onKeyDown={(e) => e.key === "Enter" && startReceive()}
-  />
-</div>
+            <input
+              className="relative z-10 h-8 w-full rounded-md bg-transparent px-2 text-[12px] font-normal text-[#101010] outline-none placeholder:font-normal placeholder:text-[#9c9b98] disabled:opacity-50"
+              placeholder="word-word-word or a stored link"
+              value={codeInput}
+              disabled={anyLocked}
+              onChange={(e) => setCodeInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && startReceive()}
+            />
+          </div>
         </div>
       </div>
-      <p className="text-[12px] font-medium leading-5 w-[388px] text-[#494946] m-1">
+      <p className="m-1 text-[12px] font-medium leading-5 text-[#494946]">
         Paste a live code (word-word-word) or a stored transfer link, then press Enter or select Receive.
       </p>
 
@@ -1764,69 +2050,74 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
       {storePhase === "error" && error && (
         <p className="mt-4 text-xs font-bold text-[#a84232]">{error}</p>
       )}
-
-      {/* Main Action Button Area — Matched to SendPanel */}
-      <div className="mt-auto pt-6">
-        {!anyLocked ? (
-          <button
-            type="button"
-            onClick={startReceive}
-            disabled={!codeInput.trim()}
-            className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
-          >
-            <div
-              className="absolute inset-0 z-0 h-full w-full overflow-hidden"
-              style={{ filter: "url(#pencil-rough)" }}
-            >
-              <SketchedBackground mode={codeInput.trim() ? "dark" : "light"} />
-            </div>
-            <span
-              className="relative z-10 flex items-center gap-2"
-              style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}
-            >
-              <DownloadIcon color="#fff" /> Receive
-            </span>
-          </button>
-        ) : isStoreLocked && storePhase !== "review" ? (
-          <button
-            type="button"
-            onClick={() => {
-              setStorePhase("idle");
-              setStoreManifest(null);
-              setCodeInput("");
-            }}
-            className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
-          >
-            <div
-              className="absolute inset-0 z-0 h-full w-full overflow-hidden"
-              style={{ filter: "url(#pencil-rough)" }}
-            >
-              <SketchedBackground mode="outline" />
-            </div>
-            <span className="relative z-10 flex items-center gap-2">
-              <CloseIcon /> {storePhase === "done" ? "Done" : "Cancel"}
-            </span>
-          </button>
-        ) : isLocked ? (
-          <button
-            type="button"
-            onClick={cancel}
-            className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
-          >
-            <div
-              className="absolute inset-0 z-0 h-full w-full overflow-hidden"
-              style={{ filter: "url(#pencil-rough)" }}
-            >
-              <SketchedBackground mode="outline" />
-            </div>
-            <span className="relative z-10 flex items-center gap-2">
-              <CloseIcon /> Cancel receive
-            </span>
-          </button>
-        ) : null}
-      </div>
     </div>
-  );
+
+    {/* BOTTOM BUTTON CONTAINER */}
+    <div className="mt-auto pt-6">
+      <p className="mb-2 text-right text-[11px] text-[#6e6a61]">
+        STUN only — no relay fallback by default.
+      </p>
+
+      {!anyLocked ? (
+        <button
+          type="button"
+          onClick={startReceive}
+          disabled={!codeInput.trim()}
+          className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
+        >
+          <div
+            className="absolute inset-0 z-0 h-full w-full overflow-hidden"
+            style={{ filter: "url(#pencil-rough)" }}
+          >
+            <SketchedBackground mode={codeInput.trim() ? "dark" : "light"} />
+          </div>
+          <span
+            className="relative z-10 flex items-center gap-2"
+            style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }}
+          >
+            <DownloadIcon color="#fff" /> Receive
+          </span>
+        </button>
+      ) : isStoreLocked && storePhase !== "review" ? (
+        <button
+          type="button"
+          onClick={() => {
+            setStorePhase("idle");
+            setStoreManifest(null);
+            setCodeInput("");
+          }}
+          className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
+        >
+          <div
+            className="absolute inset-0 z-0 h-full w-full overflow-hidden"
+            style={{ filter: "url(#pencil-rough)" }}
+          >
+            <SketchedBackground mode="outline" />
+          </div>
+          <span className="relative z-10 flex items-center gap-2">
+            <CloseIcon /> {storePhase === "done" ? "Done" : "Cancel"}
+          </span>
+        </button>
+      ) : isLocked ? (
+        <button
+          type="button"
+          onClick={cancel}
+          className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-[#101010] transition-transform active:scale-[0.99] cursor-pointer"
+        >
+          <div
+            className="absolute inset-0 z-0 h-full w-full overflow-hidden"
+            style={{ filter: "url(#pencil-rough)" }}
+          >
+            <SketchedBackground mode="outline" />
+          </div>
+          <span className="relative z-10 flex items-center gap-2">
+            <CloseIcon /> Cancel receive
+          </span>
+        </button>
+      ) : null}
+    </div>
+  </div>
+);
 }
 
 // ---------------------------------------------------------------------------
@@ -1867,7 +2158,7 @@ function IconBox({ children }: { children: React.ReactNode }) {
   );
 }
 
-function UploadIcon({ color = "#050505" }: { color?: string }) {
+function UploadIcon({ color = "#3B3B3C" }: { color?: string }) {
   return (
     <svg
       width="20"
@@ -1886,7 +2177,7 @@ function UploadIcon({ color = "#050505" }: { color?: string }) {
   );
 }
 
-function DownloadIcon({ color = "#050505" }: { color?: string }) {
+function DownloadIcon({ color = "#3B3B3C" }: { color?: string }) {
   return (
     <svg
       width="20"
