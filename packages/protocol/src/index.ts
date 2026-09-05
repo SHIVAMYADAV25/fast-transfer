@@ -29,6 +29,10 @@ export type SignalingMessageType =
   | "ICE_CANDIDATE" // either direction: ICE candidate relay
   | "ROOM_FULL" // server -> client: room already has two peers
   | "ROOM_EXPIRED" // server -> client: room TTL exceeded
+  | "PING" // client -> server: heartbeat, keeps the WS alive and lets the
+  // client detect a silently-dead connection (idle WS can get dropped by
+  // intermediate proxies/NATs without ever firing a close event)
+  | "PONG" // server -> client: heartbeat reply
   | "ERROR"; // server -> client: something went wrong, see ErrorCode
 
 export interface SignalingMessage {
