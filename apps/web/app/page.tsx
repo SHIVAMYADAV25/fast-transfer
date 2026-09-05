@@ -586,47 +586,47 @@ export default function HomePage() {
       browser link, the code chip, etc.) — that's what was dragging the whole
       column, and every full-width row inside it, off the right edge of the
       screen on mobile. */}
-  <div className="relative grid min-h-0 grid-cols-1 sm:min-h-[650px] items-stretch gap-6 sm:gap-8 border-none bg-transparent p-0 sm:grid-cols-2">
-    
-    {/* Left Column Container */}
-    <div
-      className={`h-full min-w-0 flex-col justify-between sm:pr-6 ${
-        mobileView === "send" ? "flex" : "hidden"
-      } sm:flex`}
-    >
-      <SendPanel turnOverride={turnOverride} />
-    </div>
-
-    {/* Center Divider Line */}
-    <div
-      className="absolute inset-y-0 left-1/2 hidden -translate-x-1/2 sm:block"
-      aria-hidden="true"
-    >
-      <svg
-        viewBox="0 0 10 100"
-        preserveAspectRatio="none"
-        className="h-full w-2"
-      >
-        <path
-          d="M 5 1 C 4.2 25, 5.8 75, 5 99"
-          stroke="#575656"
-          strokeWidth="1.2"
-          strokeLinecap="round"
-          opacity="0.35"
-        />
-      </svg>
-    </div>
-
-    {/* Right Column Container */}
-    <div
-      className={`h-full min-w-0 flex-col justify-between sm:pl-6 ${
-        mobileView === "receive" ? "flex" : "hidden"
-      } sm:flex`}
-    >
-      <ReceivePanel turnOverride={turnOverride} />
-    </div>
-
+<div className="relative grid min-h-[calc(100vh-180px)] grid-cols-1 sm:min-h-[650px] items-stretch gap-6 sm:gap-8 border-none bg-transparent p-0 sm:grid-cols-2">
+  
+  {/* Left Column Container (Send) */}
+  <div
+    className={`min-w-0 flex-1 flex-col justify-between sm:pr-6 ${
+      mobileView === "send" ? "flex" : "hidden"
+    } sm:flex`}
+  >
+    <SendPanel turnOverride={turnOverride} />
   </div>
+
+  {/* Center Divider Line */}
+  <div
+    className="absolute inset-y-0 left-1/2 hidden -translate-x-1/2 sm:block"
+    aria-hidden="true"
+  >
+    <svg
+      viewBox="0 0 10 100"
+      preserveAspectRatio="none"
+      className="h-full w-2"
+    >
+      <path
+        d="M 5 1 C 4.2 25, 5.8 75, 5 99"
+        stroke="#575656"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        opacity="0.35"
+      />
+    </svg>
+  </div>
+
+  {/* Right Column Container (Receive) */}
+  <div
+    className={`min-w-0 flex-1 flex-col justify-between sm:pl-6 ${
+      mobileView === "receive" ? "flex" : "hidden"
+    } sm:flex`}
+  >
+    <ReceivePanel turnOverride={turnOverride} />
+  </div>
+
+</div>
 </div>
 
         {/* <footer className="mt-4 flex items-center justify-between text-[11px] text-muted">
