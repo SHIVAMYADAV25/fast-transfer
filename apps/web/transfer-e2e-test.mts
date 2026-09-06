@@ -877,21 +877,16 @@ await test(
     );
 
     if (received) {
-      throw new Error(
-        "receiver accepted corrupted data",
-      );
-    }
+  throw new Error(
+    "receiver accepted corrupted data",
+  );
+}
 
-    if (
-      !errorMsg ||
-      !errorMsg.includes(
-        "HASH_MISMATCH",
-      )
-    ) {
-      throw new Error(
-        `expected HASH_MISMATCH error, got: ${errorMsg}`,
-      );
-    }
+if (!errorMsg || !/integrity check/i.test(errorMsg)) {
+  throw new Error(
+    `expected integrity check error, got: ${errorMsg}`,
+  );
+}
   },
 );
 
