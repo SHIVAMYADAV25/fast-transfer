@@ -21,7 +21,7 @@ tag = "v1"
 new_sqlite_classes = ["TransferRoom", "StoredTransfer"]
 
 [vars]
-ALLOWED_ORIGINS = "https://ifrit-eight.vercel.app,tauri://localhost,https://tauri.localhost"
+ALLOWED_ORIGINS = "https://ifrit-eight.vercel.app,http://localhost:3000,tauri://localhost,https://tauri.localhost"
 
 #ALLOWED_ORIGINS = "http://localhost:3000,tauri://localhost,https://tauri.localhost"
 
