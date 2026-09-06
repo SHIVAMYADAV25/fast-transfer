@@ -1,0 +1,74 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="roundedSquare">
+      <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220"/>
+    </clipPath>
+  </defs>
+
+  <g>
+    <!-- background -->
+
+    <!-- cat body -->
+    <path d="M 372 760
+             C 360 660, 356 560, 400 500
+             C 420 472, 448 460, 512 460
+             C 576 460, 604 472, 624 500
+             C 668 560, 664 660, 652 760
+             Z"
+          fill="#FFFFFF" stroke="#2B2B2B" stroke-width="14" stroke-linejoin="round"/>
+
+    <!-- tail -->
+    <path d="M 648 730 C 720 720, 758 660, 742 592 C 732 550, 700 528, 672 534"
+          fill="none" stroke="#2B2B2B" stroke-width="14" stroke-linecap="round"/>
+
+    <!-- front paws -->
+    <path d="M 452 758 C 450 780, 450 796, 456 806" fill="none" stroke="#2B2B2B" stroke-width="14" stroke-linecap="round"/>
+    <path d="M 572 758 C 574 780, 574 796, 568 806" fill="none" stroke="#2B2B2B" stroke-width="14" stroke-linecap="round"/>
+
+    <!-- head -->
+    <circle cx="512" cy="360" r="158" fill="#FFFFFF" stroke="#2B2B2B" stroke-width="14"/>
+
+    <!-- ears -->
+    <path d="M 388 262 L 362 158 L 456 232 Z" fill="#FFFFFF" stroke="#2B2B2B" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M 636 262 L 662 158 L 568 232 Z" fill="#FFFFFF" stroke="#2B2B2B" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M 400 246 L 388 196 L 432 226 Z" fill="#F6A9B8" stroke="none"/>
+    <path d="M 624 246 L 636 196 L 592 226 Z" fill="#F6A9B8" stroke="none"/>
+
+    <!-- stripes -->
+    <path d="M 430 210 L 452 250" fill="none" stroke="#2B2B2B" stroke-width="8" stroke-linecap="round"/>
+    <path d="M 594 210 L 572 250" fill="none" stroke="#2B2B2B" stroke-width="8" stroke-linecap="round"/>
+
+    <!-- eyes -->
+    <circle cx="460" cy="368" r="15" fill="#2B2B2B"/>
+    <circle cx="564" cy="368" r="15" fill="#2B2B2B"/>
+
+    <!-- blush -->
+    <ellipse cx="432" cy="404" rx="20" ry="12" fill="#F6C6CE" opacity="0.8"/>
+    <ellipse cx="592" cy="404" rx="20" ry="12" fill="#F6C6CE" opacity="0.8"/>
+
+    <!-- nose + mouth -->
+    <path d="M 500 392 L 524 392 L 512 404 Z" fill="#2B2B2B"/>
+    <path d="M 512 404 C 512 416, 494 422, 480 414" fill="none" stroke="#2B2B2B" stroke-width="8" stroke-linecap="round"/>
+    <path d="M 512 404 C 512 416, 530 422, 544 414" fill="none" stroke="#2B2B2B" stroke-width="8" stroke-linecap="round"/>
+
+    <!-- whiskers -->
+    <path d="M 372 370 L 316 358" fill="none" stroke="#2B2B2B" stroke-width="7" stroke-linecap="round"/>
+    <path d="M 372 392 L 314 396" fill="none" stroke="#2B2B2B" stroke-width="7" stroke-linecap="round"/>
+    <path d="M 652 370 L 708 358" fill="none" stroke="#2B2B2B" stroke-width="7" stroke-linecap="round"/>
+    <path d="M 652 392 L 710 396" fill="none" stroke="#2B2B2B" stroke-width="7" stroke-linecap="round"/>
+
+    <!-- paper airplane, tucked by the paw like it's being delivered -->
+    <g transform="translate(660,650) rotate(-18)">
+      <path d="M0 0 L190 46 L0 92 L38 46 Z" fill="#FFFFFF" stroke="#2B2B2B" stroke-width="12" stroke-linejoin="round"/>
+      <path d="M38 46 L0 92" fill="none" stroke="#2B2B2B" stroke-width="10" stroke-linejoin="round"/>
+      <path d="M38 46 L 130 46" fill="none" stroke="#2B2B2B" stroke-width="8" stroke-linecap="round"/>
+    </g>
+
+    <!-- little motion sparkle -->
+    <g stroke="#2B2B2B" stroke-width="8" stroke-linecap="round">
+      <path d="M 792 470 L 812 452" />
+      <path d="M 806 500 L 832 496" />
+      <path d="M 796 528 L 814 546" />
+    </g>
+  </g>
+</svg>
