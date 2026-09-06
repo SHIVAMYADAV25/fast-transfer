@@ -1,54 +1,223 @@
+# name: Build Kimo Desktop
+
+# # Cross-platform Tauri build for the Kimo desktop app.
+# #
+# # - Push a tag like `v0.1.0` (or run this workflow manually) to build
+# #   installers for Windows (.msi/.exe), macOS (.dmg/.app, both Intel and
+# #   Apple Silicon), and Linux (.AppImage/.deb) and attach them to a
+# #   GitHub Release.
+# # - Every push/PR touching apps/web, apps/desktop, or packages/protocol
+# #   also gets a quick typecheck + the real transfer-engine e2e test, so a
+# #   broken build is caught before it reaches the release job.
+
+# on:
+#   push:
+#     branches: [main]
+#     tags: ["v*.*.*"]
+#     paths:
+#       - "apps/web/**"
+#       - "apps/desktop/**"
+#       - "packages/protocol/**"
+#       - ".github/workflows/desktop-build.yml"
+#   pull_request:
+#     paths:
+#       - "apps/web/**"
+#       - "apps/desktop/**"
+#       - "packages/protocol/**"
+#   workflow_dispatch: {}
+
+# env:
+#   # These are baked into the static export at build time (see
+#   # apps/web/.env.production.example) — set the real values as repo
+#   # variables/secrets: Settings → Secrets and variables → Actions.
+#   NEXT_PUBLIC_SIGNALING_HTTP_URL: ${{ vars.NEXT_PUBLIC_SIGNALING_HTTP_URL }}
+#   NEXT_PUBLIC_SIGNALING_WS_URL: ${{ vars.NEXT_PUBLIC_SIGNALING_WS_URL }}
+#   NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+#   NEXT_PUBLIC_TURN_URLS: ${{ vars.NEXT_PUBLIC_TURN_URLS }}
+#   NEXT_PUBLIC_TURN_USERNAME: ${{ vars.NEXT_PUBLIC_TURN_USERNAME }}
+#   NEXT_PUBLIC_TURN_CREDENTIAL: ${{ secrets.NEXT_PUBLIC_TURN_CREDENTIAL }}
+
+# jobs:
+#   verify:
+#     name: Typecheck + transfer engine e2e test
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - uses: pnpm/action-setup@v4
+#         with:
+#           version: 9.12.0
+
+#       - uses: actions/setup-node@v4
+#         with:
+#           node-version: 20
+#           cache: pnpm
+
+#       - name: Install dependencies
+#         run: pnpm install --frozen-lockfile
+
+#       - name: Typecheck all workspaces
+#         run: pnpm typecheck
+
+#       - name: Run the real sendFiles()/FileReceiver e2e test
+#         run: pnpm --filter @kimo/web test:e2e
+
+#   build:
+#     name: Build (${{ matrix.platform }})
+#     needs: verify
+#     # Full cross-platform native builds are slow (Rust compile time) and
+#     # only needed when actually cutting a release, or when explicitly
+#     # requested — not on every PR. PRs and plain branch pushes stop at
+#     # the `verify` job above.
+#     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         include:
+#           - platform: "macos-latest"
+#             args: "--target aarch64-apple-darwin"
+#           - platform: "macos-latest"
+#             args: "--target x86_64-apple-darwin"
+#           - platform: "ubuntu-22.04"
+#             args: ""
+#           - platform: "windows-latest"
+#             args: ""
+#     runs-on: ${{ matrix.platform }}
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - uses: pnpm/action-setup@v4
+#         with:
+#           version: 9.12.0
+
+#       - uses: actions/setup-node@v4
+#         with:
+#           node-version: 20
+#           cache: pnpm
+
+#       - name: Install Linux system dependencies (webkitgtk, etc.)
+#         if: matrix.platform == 'ubuntu-22.04'
+#         run: |
+#           sudo apt-get update
+#           sudo apt-get install -y \
+#             libwebkit2gtk-4.1-dev \
+#             libappindicator3-dev \
+#             librsvg2-dev \
+#             patchelf \
+#             libssl-dev
+
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@stable
+#         with:
+#           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+#       - name: Rust build cache
+#         uses: swatinem/rust-cache@v2
+#         with:
+#           workspaces: apps/desktop/src-tauri -> target
+
+#       - name: Install JS dependencies
+#         run: pnpm install --frozen-lockfile
+
+#       - name: Build and release with Tauri
+#         uses: tauri-apps/tauri-action@v0
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#           # macOS code signing (optional — unsigned builds work fine for
+#           # personal/internal use, just show an "unidentified developer"
+#           # warning). Set these repo secrets to sign + notarize instead.
+#           # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+#           # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+#           # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+#           # APPLE_ID: ${{ secrets.APPLE_ID }}
+#           # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+#           # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+#           # Windows code signing (optional, same story).
+#           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+#           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+#         with:
+#           projectPath: apps/desktop
+#           # On a manual (non-tag) run this just labels a draft release
+#           # after the current ref — nothing publishes until you edit and
+#           # publish the draft on GitHub, so this is safe to run anytime.
+#           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
+#           releaseName: "Kimo ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}"
+#           releaseBody: "Download the installer for your OS below."
+#           releaseDraft: true
+#           prerelease: ${{ github.ref_type != 'tag' }}
+#           includeUpdaterJson: false
+#           args: ${{ matrix.args }}
+
+
 name: Build Kimo Desktop
 
 # Cross-platform Tauri build for the Kimo desktop app.
 #
-# - Push a tag like `v0.1.0` (or run this workflow manually) to build
-#   installers for Windows (.msi/.exe), macOS (.dmg/.app, both Intel and
-#   Apple Silicon), and Linux (.AppImage/.deb) and attach them to a
-#   GitHub Release.
-# - Every push/PR touching apps/web, apps/desktop, or packages/protocol
-#   also gets a quick typecheck + the real transfer-engine e2e test, so a
-#   broken build is caught before it reaches the release job.
+# - Push a tag like v0.1.0 (or run this workflow manually) to build
+#   installers for Windows, macOS Intel, macOS Apple Silicon, and Linux.
+# - Every push/PR touching the relevant workspaces gets typecheck +
+#   transfer-engine E2E verification.
+#
+# macOS:
+# - Currently uses ad-hoc signing ("-").
+# - No Apple Developer certificate/notarization is required yet.
+# - Proper Apple signing can be added later.
 
 on:
   push:
-    branches: [main]
-    tags: ["v*.*.*"]
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
     paths:
       - "apps/web/**"
       - "apps/desktop/**"
       - "packages/protocol/**"
       - ".github/workflows/desktop-build.yml"
+
   pull_request:
     paths:
       - "apps/web/**"
       - "apps/desktop/**"
       - "packages/protocol/**"
-  workflow_dispatch: {}
+      - ".github/workflows/desktop-build.yml"
+
+  workflow_dispatch:
+
+# The build job creates/uploads a GitHub Release.
+permissions:
+  contents: write
 
 env:
-  # These are baked into the static export at build time (see
-  # apps/web/.env.production.example) — set the real values as repo
-  # variables/secrets: Settings → Secrets and variables → Actions.
+  # These values are baked into the static web export at build time.
   NEXT_PUBLIC_SIGNALING_HTTP_URL: ${{ vars.NEXT_PUBLIC_SIGNALING_HTTP_URL }}
   NEXT_PUBLIC_SIGNALING_WS_URL: ${{ vars.NEXT_PUBLIC_SIGNALING_WS_URL }}
   NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+
+  # Optional TURN configuration.
   NEXT_PUBLIC_TURN_URLS: ${{ vars.NEXT_PUBLIC_TURN_URLS }}
   NEXT_PUBLIC_TURN_USERNAME: ${{ vars.NEXT_PUBLIC_TURN_USERNAME }}
   NEXT_PUBLIC_TURN_CREDENTIAL: ${{ secrets.NEXT_PUBLIC_TURN_CREDENTIAL }}
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # VERIFY
+  # ---------------------------------------------------------------------------
   verify:
-    name: Typecheck + transfer engine e2e test
+    name: Typecheck + transfer engine E2E test
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 9.12.0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
@@ -59,43 +228,69 @@ jobs:
       - name: Typecheck all workspaces
         run: pnpm typecheck
 
-      - name: Run the real sendFiles()/FileReceiver e2e test
-        run: pnpm --filter @kimo/web test:e2e
+      - name: Run transfer engine E2E test
+        run: pnpm --filter @fast-transfer/web test:e2e
 
+  # ---------------------------------------------------------------------------
+  # NATIVE BUILDS
+  # ---------------------------------------------------------------------------
   build:
     name: Build (${{ matrix.platform }})
     needs: verify
-    # Full cross-platform native builds are slow (Rust compile time) and
-    # only needed when actually cutting a release, or when explicitly
-    # requested — not on every PR. PRs and plain branch pushes stop at
-    # the `verify` job above.
+
+    # Native builds only happen:
+    # - when manually running the workflow
+    # - when pushing a version tag such as v0.1.0
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+
     strategy:
       fail-fast: false
+
       matrix:
         include:
-          - platform: "macos-latest"
+          # Apple Silicon
+          - platform: macos-latest
             args: "--target aarch64-apple-darwin"
-          - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin"
-          - platform: "ubuntu-22.04"
-            args: ""
-          - platform: "windows-latest"
-            args: ""
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+          # Intel Mac
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+
+          # Linux
+          - platform: ubuntu-22.04
+            args: ""
+
+          # Windows
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      # -----------------------------------------------------------------------
+      # CHECKOUT
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # NODE / PNPM
+      # -----------------------------------------------------------------------
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 9.12.0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: Install Linux system dependencies (webkitgtk, etc.)
+      # -----------------------------------------------------------------------
+      # LINUX DEPENDENCIES
+      # -----------------------------------------------------------------------
+      - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
@@ -106,6 +301,9 @@ jobs:
             patchelf \
             libssl-dev
 
+      # -----------------------------------------------------------------------
+      # RUST
+      # -----------------------------------------------------------------------
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -116,34 +314,62 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri -> target
 
+      # -----------------------------------------------------------------------
+      # JAVASCRIPT DEPENDENCIES
+      # -----------------------------------------------------------------------
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
+      # -----------------------------------------------------------------------
+      # TAURI BUILD
+      # -----------------------------------------------------------------------
       - name: Build and release with Tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS code signing (optional — unsigned builds work fine for
-          # personal/internal use, just show an "unidentified developer"
-          # warning). Set these repo secrets to sign + notarize instead.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows code signing (optional, same story).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # -------------------------------------------------------------------
+          # macOS SIGNING
+          #
+          # Use ad-hoc signing for now.
+          #
+          # This avoids:
+          #   security import
+          #   failed to import keychain certificate
+          #
+          # Proper Apple Developer signing/notarization can be added later.
+          # -------------------------------------------------------------------
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && '-' || '' }}
+
         with:
+          # Tauri project is inside the monorepo.
           projectPath: apps/desktop
-          # On a manual (non-tag) run this just labels a draft release
-          # after the current ref — nothing publishes until you edit and
-          # publish the draft on GitHub, so this is safe to run anytime.
+
+          # The action runs the Tauri CLI using the package's "tauri" script.
+          #
+          # apps/desktop/package.json MUST contain:
+          #
+          # "tauri": "tauri"
+
+          # Release/tag used for manual development builds.
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: "Kimo ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}"
-          releaseBody: "Download the installer for your OS below."
+
+          releaseName: ${{ github.ref_type == 'tag' && format('Kimo {0}', github.ref_name) || 'Kimo dev build' }}
+
+          releaseBody: |
+            Kimo desktop build.
+
+            Download the installer for your operating system below.
+
+          # Keep releases as drafts until you manually verify them.
           releaseDraft: true
+
+          # Manual builds are prereleases.
+          # Version tags such as v0.1.0 are normal releases.
           prerelease: ${{ github.ref_type != 'tag' }}
+
+          # We are not using the Tauri updater yet.
           includeUpdaterJson: false
+
+          # Architecture-specific macOS targets.
           args: ${{ matrix.args }}
