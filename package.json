@@ -6,7 +6,10 @@
   "scripts": {
     "dev:web": "pnpm --filter @fast-transfer/web dev",
     "dev:signaling": "pnpm --filter @fast-transfer/signaling dev",
-    "typecheck": "pnpm -r typecheck",
-    "build": "pnpm --filter @fast-transfer/web build"
+    "dev:desktop": "pnpm --filter @fast-transfer/desktop dev",
+    "dev:mobile": "pnpm --filter @fast-transfer/mobile start",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "build": "pnpm --filter @fast-transfer/web build",
+    "build:desktop": "pnpm --filter @fast-transfer/desktop build"
   }
 }

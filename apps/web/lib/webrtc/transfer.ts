@@ -1388,11 +1388,21 @@ export class FileReceiver {
 }
 
 /**
- * Trigger a browser download.
+ * Save a completed file to disk.
+ *
+ * Inside the Kimo desktop app this opens a native "Save As" dialog and
+ * writes the file directly via Rust (see apps/desktop/src-tauri) instead
+ * of relying on the browser's download manager. In a plain browser tab
+ * (the Vercel-deployed web app) this is unchanged from before: the
+ * classic `<a download>` click-simulation trick.
  */
-export function downloadFile(
+export async function downloadFile(
   file: File,
-): void {
+): Promise<void> {
+  const { saveFileNatively } = await import("../native/save");
+  const savedNatively = await saveFileNatively(file);
+  if (savedNatively) return;
+
   const url =
     URL.createObjectURL(file);
 

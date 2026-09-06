@@ -1,8 +1,17 @@
-# fast-transfer
+# kimo
 
 Direct browser-to-browser file transfer over WebRTC. Files never touch the
 server — the signaling layer only exchanges tiny SDP/ICE messages to help two
 browsers find each other and open a peer connection.
+
+Ships three ways from the same code: as a website (`apps/web` on Vercel), as
+a native desktop app for Windows/macOS/Linux (`apps/desktop`, via Tauri),
+and as a native mobile app for iOS/Android (`apps/mobile`, via Expo) — all
+three with the identical UI, images, and animations, since the desktop and
+mobile apps are thin native shells around the same web app rather than
+separate reimplementations. See `apps/desktop/README.md` and
+`apps/mobile/README.md` for platform-specific setup, build, and packaging
+instructions.
 
 Status: **All PRD milestones built** — two browsers can pair via a code and
 transfer files directly over WebRTC (single or, toggle-enabled, up to 4
@@ -21,8 +30,12 @@ that's been typechecked and built at every step, not a finished product.
 apps/
   web/         Next.js app (Vercel) — UI, WebRTC client, transfer engine
   signaling/   Cloudflare Worker + Durable Object — signaling only
+  desktop/     Tauri wrapper around apps/web — native Windows/macOS/Linux app
+  mobile/      Expo wrapper around apps/web — native iOS/Android app
 packages/
   protocol/    Shared message types/shapes used by both apps
+icon-src/
+  kimo-icon.svg  Source app icon (hand-drawn cat + paper airplane mark)
 ```
 
 **Before adding anything else, work through `TESTING.md`.** Nothing in this
@@ -71,7 +84,7 @@ browsers/devices on the same network) to test a transfer:
 
 - **Web app → Vercel.** Set `NEXT_PUBLIC_SIGNALING_HTTP_URL` and
   `NEXT_PUBLIC_SIGNALING_WS_URL` to your deployed Worker's URL
-  (e.g. `https://fast-transfer-signaling.<you>.workers.dev`), and
+  (e.g. `https://kimo-signaling.<you>.workers.dev`), and
   `NEXT_PUBLIC_APP_URL` to your Vercel domain.
 - **Signaling → Cloudflare.** `cd apps/signaling && npx wrangler deploy`.
   Update `wrangler.toml`'s `ALLOWED_ORIGINS` to your real Vercel domain
@@ -341,7 +354,7 @@ but it's real signal in a way nothing else in this project has been until now.
    this, not a hypothetical).
 8. ~~Stored/async mode~~ — done (`lib/store/`, `apps/signaling/src/store.ts`,
    `app/s/[id]/page.tsx`). Needs, before real traffic:
-   - `wrangler r2 bucket create fast-transfer-store` (not automatic —
+   - `wrangler r2 bucket create kimo-store` (not automatic —
      see `apps/signaling/wrangler.toml`'s comment on the R2 binding)
    - Incremental chunk-upload tracking in `StoredTransfer`, to fix the
      orphaned-R2-objects-on-abandoned-upload gap above
@@ -355,7 +368,7 @@ until you create it:
 
 ```bash
 cd apps/signaling
-npx wrangler r2 bucket create fast-transfer-store
+npx wrangler r2 bucket create kimo-store
 ```
 
 Everything else deploys the same way as before (`wrangler deploy`) — the

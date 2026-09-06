@@ -11,10 +11,10 @@ class_name = "TransferRoom"
 name = "STORED_TRANSFER"
 class_name = "StoredTransfer"
 
-[[r2_buckets]]
-binding = "STORE_BUCKET"
-bucket_name = "fast-transfer-store"
-# Create the bucket first: `wrangler r2 bucket create fast-transfer-store`
+#[[r2_buckets]]
+#binding = "STORE_BUCKET"
+#bucket_name = "kimo-store"
+# Create the bucket first: `wrangler r2 bucket create kimo-store`
 
 [[migrations]]
 tag = "v1"
@@ -25,7 +25,18 @@ tag = "v2"
 new_classes = ["StoredTransfer"]
 
 [vars]
-ALLOWED_ORIGINS = "http://localhost:3000"
+ALLOWED_ORIGINS = "http://localhost:3000,tauri://localhost,https://tauri.localhost"
+
+# tauri://localhost is the desktop app's origin on macOS/Linux;
+# https://tauri.localhost is the equivalent on Windows (WebView2). Both
+# need to stay allowed alongside your real web domain(s) below, or the
+# desktop app's signaling WebSocket will be rejected by CORS.
+#
+# For production, override with:
+#   wrangler secret put ALLOWED_ORIGINS
+# or set a [env.production.vars] block with your real domain(s).
+
+#ALLOWED_ORIGINS = "https://ifrit-eight.vercel.app"
 
 # For production, override with:
 #   wrangler secret put ALLOWED_ORIGINS

@@ -127,7 +127,10 @@ function base64UrlToBytes(b64url: string): Uint8Array {
 }
 
 export function buildShareUrl(appUrl: string, id: string, masterKey: Uint8Array): string {
-  return `${appUrl}/s/${id}#v1.${bytesToBase64Url(masterKey)}`;
+  // `/s?id=...` rather than `/s/...` (a dynamic path segment) so the same
+  // page also works from a fully static export with no server behind it
+  // — that's what the desktop (Tauri) build ships. See app/s/page.tsx.
+  return `${appUrl}/s?id=${id}#v1.${bytesToBase64Url(masterKey)}`;
 }
 
 export interface ParsedShareLink {
@@ -135,15 +138,27 @@ export interface ParsedShareLink {
   masterKey: Uint8Array;
 }
 
-/** Accepts either a full URL or a bare "id#v1.key" fragment pasted directly. */
+/**
+ * Accepts any of:
+ *  - a full current-format URL: ".../s?id=XXXX#v1.KEY"
+ *  - a full legacy-format URL:  ".../s/XXXX#v1.KEY"
+ *  - a bare "XXXX#v1.KEY" fragment pasted directly
+ */
 export function parseShareLink(input: string): ParsedShareLink | null {
   const trimmed = input.trim();
   const hashIndex = trimmed.indexOf("#v1.");
   if (hashIndex === -1) return null;
   const keyPart = trimmed.slice(hashIndex + 4);
   let idPart = trimmed.slice(0, hashIndex);
-  const slashIndex = idPart.lastIndexOf("/");
-  if (slashIndex !== -1) idPart = idPart.slice(slashIndex + 1);
+
+  const queryMatch = idPart.match(/[?&]id=([^&]+)/);
+  if (queryMatch) {
+    idPart = queryMatch[1];
+  } else {
+    const slashIndex = idPart.lastIndexOf("/");
+    if (slashIndex !== -1) idPart = idPart.slice(slashIndex + 1);
+  }
+
   if (!idPart || !keyPart) return null;
   try {
     return { id: idPart, masterKey: base64UrlToBytes(keyPart) };
