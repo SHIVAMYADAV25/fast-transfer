@@ -24,6 +24,7 @@ import { deriveKeys, parseShareLink } from "@/lib/store/storecrypto";
 import { STORED_TRANSFER_DEFAULT_TTL_MS } from "@fast-transfer/protocol";
 import type { StoredManifest } from "@fast-transfer/protocol";
 import { formatBytes } from "@/lib/format";
+import { TutorialModal, useTutorialAutoOpen } from "@/components/tutorial-modal";
 
 type SendPhase = "idle" | "waiting" | "connecting" | "sending" | "reconnecting" | "done" | "error";
 type ReceivePhase = "idle" | "connecting" | "receiving" | "verifying" | "reconnecting" | "done" | "error";
@@ -390,6 +391,13 @@ export default function HomePage() {
   // both panels are shown side-by-side as before, this only matters below sm.
   const [mobileView, setMobileView] = useState<"send" | "receive">("send");
 
+  // Hand-drawn "how this works" walkthrough. Opens from the header's help
+  // icon, and — optionally — once automatically for first-time visitors.
+  // Remove the useTutorialAutoOpen(...) line below if you only want the
+  // manual icon trigger.
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  useTutorialAutoOpen(setTutorialOpen);
+
   return (
     <main className="relative min-h-screen w-full overflow-hidden text-[#1a1a1a]">
       {/* Background Image */}
@@ -404,6 +412,10 @@ export default function HomePage() {
 
       {/* Dynamic Flying Butterfly Effect */}
       <FlyingButterfly />
+
+      {/* Hand-drawn "how this works" walkthrough, opened from the help
+          icon in the header (see nav below). */}
+      <TutorialModal open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
 
       <div className="mx-auto max-w-5xl z-10 relative pt-4 px-4 sm:px-6 lg:px-8">
         <header className="mb-2 flex items-center justify-between gap-2">
@@ -443,11 +455,40 @@ export default function HomePage() {
 
   {/* Right side: Hand-drawn style navigation with dividers */}
   <nav className="flex shrink-0 items-center gap-1.5 sm:gap-3 text-[#575656]">
+    {/* Hand-Drawn Help (Tutorial trigger) Icon — opens the walkthrough modal */}
+    <button
+      type="button"
+      onClick={() => setTutorialOpen(true)}
+      className="transition-opacity hover:opacity-70"
+      aria-label="How kimo works"
+    >
+      <svg
+        className="h-4 w-4 sm:h-5 sm:w-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {/* Hand-drawn wobbly circle */}
+        <path d="M12 3.3c4.9-.2 8.7 3.5 8.7 8.2s-3.9 8.6-8.8 8.5C7.2 20 3.4 16.4 3.4 11.7S7.1 3.5 12 3.3Z" />
+        {/* Hand-drawn question mark */}
+        <path d="M9.6 9.3c.3-1.6 1.7-2.6 3.3-2.4 1.5.2 2.6 1.4 2.5 2.8-.1 1.6-1.5 2.1-2.4 2.9-.6.6-.8 1.1-.8 1.9" />
+        <circle cx="12.1" cy="16.7" r="1" fill="currentColor" stroke="none" />
+      </svg>
+    </button>
+
+    {/* Hand-Drawn Bar Divider */}
+    <svg width="6" height="18" viewBox="0 0 6 18" fill="none" className="shrink-0">
+      <path d="M 3 1.5 C 2.8 6, 3.2 12, 3 16.5" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+
     {/* Open Book (Tutorials) Icon */}
     <a
-      href="/tutorials"
+      href="/blog"
       className="transition-opacity hover:opacity-70"
-      aria-label="Tutorials"
+      aria-label="Blog / Info"
     >
       <svg
         className="h-4 w-4 sm:h-5 sm:w-5"
@@ -476,34 +517,7 @@ export default function HomePage() {
       <path d="M 3 1.5 C 2.8 6, 3.2 12, 3 16.5" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
 
-    {/* Hand-Drawn "i" (Blog / Info) Icon */}
-    <a
-      href="/blog"
-      className="transition-opacity hover:opacity-70"
-      aria-label="Blog / Info"
-    >
-      <svg
-        className="h-4 w-4 sm:h-5 sm:w-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        {/* Outer Circle */}
-        <path d="M12 21c4.97 0 9-4.03 9-9s-4.03-9-9-9-9 4.03-9 9 4.03 9 9 9z" />
-        {/* Hand-drawn 'i' dot */}
-        <circle cx="12" cy="8" r="1.2" fill="currentColor" />
-        {/* Hand-drawn 'i' body stem */}
-        <path d="M12 11.5v5.5" strokeWidth="2.2" />
-      </svg>
-    </a>
-
-    {/* Hand-Drawn Bar Divider */}
-    <svg width="6" height="18" viewBox="0 0 6 18" fill="none" className="shrink-0">
-      <path d="M 3 1.5 C 3.2 5.5, 2.8 11.5, 3 16.5" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
+    
 
     {/* Hand-Drawn Double-Line X (Twitter) Icon */}
     <a
@@ -1412,7 +1426,7 @@ function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   const isStoreLocked = storePhase !== "idle";
 
 return (
-  <div className="flex h-full flex-col justify-between">
+  <div className="flex h-full flex-col justify-between" data-tour="send-panel">
     {/* TOP CONTENT WRAPPER */}
     <div className="flex-1">
       <div className="mb-4 flex items-center gap-3">
@@ -1455,13 +1469,16 @@ return (
         Direct before trusting it on your network
       </label>
 
-      <FileDropzone
-        files={files}
-        disabled={isLocked || isStoreLocked}
-        onFilesSelected={setFiles}
-        onRemoveFile={(i) => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
-      />
+      <div data-tour="file-dropzone">
+        <FileDropzone
+          files={files}
+          disabled={isLocked || isStoreLocked}
+          onFilesSelected={setFiles}
+          onRemoveFile={(i) => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
+        />
+      </div>
 
+      <div data-tour="code-area">
       {!storeMode && (
         <>
           {code && phase !== "idle" && (
@@ -1542,6 +1559,7 @@ return (
           )}
         </>
       )}
+      </div>
 
       {storeMode && (
         <>
@@ -1633,6 +1651,7 @@ return (
           type="button"
           onClick={startSend}
           disabled={files.length === 0}
+          data-tour="send-button"
           className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
         >
           <div className="absolute inset-0 z-0 h-full w-full overflow-hidden" style={{ filter: "url(#pencil-rough)" }}>
@@ -1657,6 +1676,10 @@ return (
         </button>
       )}
     </div>
+
+    {/* TODO: Desktop & mobile app download links go here, right under the
+        Send button — same spot referenced in the "Desktop & mobile, on the
+        way" tutorial step (components/tutorial-modal.tsx). */}
 
     <div className="mt-2 w-full sm:hidden">
       <img
@@ -1969,7 +1992,7 @@ function ReceivePanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
   const anyLocked = isLocked || isStoreLocked;
 
 return (
-  <div className="flex h-full flex-col justify-between">
+  <div className="flex h-full flex-col justify-between" data-tour="receive-panel">
     {/* TOP CONTENT WRAPPER */}
     <div className="flex-1">
       {/* Header — Matched to SendPanel */}
@@ -1994,7 +2017,7 @@ return (
   </label>
   
   {/* Relative wrapper with explicit overflow-visible */}
-  <div className="relative z-0 overflow-visible rounded-[6px] bg-[#f4f2eb]/70 p-1">
+  <div className="relative z-0 overflow-visible rounded-[6px] bg-[#f4f2eb]/70 p-1" data-tour="receive-input">
     
     {/* Sleeping Cat Image - Higher Z-Index & Clean Positioning */}
     <img
@@ -2213,6 +2236,7 @@ return (
           type="button"
           onClick={startReceive}
           disabled={!codeInput.trim()}
+          data-tour="receive-button"
           className="relative flex h-12 w-full items-center justify-center gap-2 font-bold text-white transition-transform active:scale-[0.99] cursor-pointer disabled:cursor-not-allowed"
         >
           <div
@@ -2266,6 +2290,10 @@ return (
         </button>
       ) : null}
     </div>
+
+    {/* TODO: Desktop & mobile app download links go here, right under the
+        Receive button — same spot referenced in the "Desktop & mobile, on
+        the way" tutorial step (components/tutorial-modal.tsx). */}
   </div>
 );
 }
