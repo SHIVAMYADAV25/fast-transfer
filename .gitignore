@@ -2,3 +2,11 @@ node_modules
 .next
 .wrangler
 .env
+.env.production
+.env.desktop
+
+# Desktop (Tauri) — Cargo.lock IS committed on purpose (it's a binary
+# app, not a library), for reproducible CI builds.
+apps/web/out
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
