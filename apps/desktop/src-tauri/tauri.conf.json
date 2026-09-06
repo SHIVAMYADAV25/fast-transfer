@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kimo",
+  "version": "0.1.0",
+  "identifier": "com.kimo.app",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @fast-transfer/web dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "pnpm --filter @fast-transfer/web build:desktop",
+    "frontendDist": "../web/out"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Kimo",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 560,
+        "resizable": true,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Kimo",
+    "copyright": "Copyright © Kimo contributors",
+    "category": "Utility",
+    "shortDescription": "Direct, encrypted, peer-to-peer file transfer.",
+    "longDescription": "Kimo sends files directly between two computers over an encrypted WebRTC connection. No file ever touches a server.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  }
+}

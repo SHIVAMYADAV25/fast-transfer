@@ -1,0 +1,14 @@
+{
+  "name": "@fast-transfer/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kimo desktop app — the Next.js UI in apps/web, wrapped natively with Tauri.",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "tauri icon"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}
