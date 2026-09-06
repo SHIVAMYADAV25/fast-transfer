@@ -40,8 +40,23 @@ export interface Env {
 
 function corsHeaders(origin: string | null, env: Env): HeadersInit {
   const allowed = (env.ALLOWED_ORIGINS ?? "*").split(",").map((s) => s.trim());
+
+  // Tauri's desktop webview origin on Windows has been observed as both
+  // `https://tauri.localhost` and `http://tauri.localhost` depending on
+  // the Tauri/WebView2 version — nothing in Tauri's own docs guarantees
+  // which one a given build will use, and getting this wrong means every
+  // request from the desktop app silently fails CORS with no obvious
+  // cause (see git history / README for the real debugging story here).
+  // Rather than keep guessing exact strings, treat any `tauri.localhost`
+  // origin (either scheme) as the desktop app, in addition to whatever
+  // is explicitly listed in ALLOWED_ORIGINS.
+  const isTauriDesktopOrigin =
+    origin != null && /^https?:\/\/tauri\.localhost$/.test(origin);
+
   const allowOrigin =
-    allowed.includes("*") || (origin && allowed.includes(origin)) ? origin ?? "*" : "null";
+    allowed.includes("*") || isTauriDesktopOrigin || (origin && allowed.includes(origin))
+      ? origin ?? "*"
+      : "null";
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

@@ -7,7 +7,7 @@
     "beforeDevCommand": "pnpm --filter @fast-transfer/web dev",
     "devUrl": "http://localhost:3000",
     "beforeBuildCommand": "pnpm --filter @fast-transfer/web build:desktop",
-    "frontendDist": "../web/out"
+    "frontendDist": "../../web/out"
   },
   "app": {
     "windows": [
