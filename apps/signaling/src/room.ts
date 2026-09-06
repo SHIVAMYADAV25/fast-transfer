@@ -29,6 +29,26 @@ export class TransferRoom {
 
   constructor(state: DurableObjectState) {
     this.state = state;
+
+    // Restore in-memory socket bookkeeping after hibernation.
+    //
+    // This object uses the WebSocket Hibernation API (acceptWebSocket
+    // below), which means Cloudflare is free to evict it from memory
+    // while a connection sits idle (e.g. the sender waiting on the
+    // "waiting for recipient" screen while the receiver takes a while to
+    // type in the code) and respawn it later when a new event arrives.
+    // The respawn re-runs this constructor, but `this.sockets` is a plain
+    // in-memory field — without repopulating it here, a respawned object
+    // "forgets" the sender's socket even though it's still alive at the
+    // edge. The next time the receiver connects, `this.sockets[other]` in
+    // handleWebSocketUpgrade would be empty, so PEER_JOINED never fires
+    // and the two sides never start their WebRTC handshake. Restoring
+    // from `state.getWebSockets()` (whose tags survive hibernation) fixes
+    // this regardless of how long the receiver takes.
+    for (const ws of state.getWebSockets()) {
+      const role = this.roleOf(ws);
+      if (role) this.sockets[role] = ws;
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
