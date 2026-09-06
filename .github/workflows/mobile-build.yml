@@ -1,0 +1,87 @@
+name: Build Kimo Mobile
+
+# EAS handles the actual native compilation in the cloud (no local Xcode
+# or Android Studio needed) — this workflow just triggers it and keeps a
+# fast typecheck gate on every push/PR so a broken build is caught early.
+#
+# Requires an EXPO_TOKEN repo secret: create one at
+# https://expo.dev/accounts/<you>/settings/access-tokens and add it under
+# Settings → Secrets and variables → Actions.
+
+on:
+  push:
+    branches: [main]
+    tags: ["mobile-v*.*.*"]
+    paths:
+      - "apps/mobile/**"
+      - "apps/web/lib/native/**"
+      - ".github/workflows/mobile-build.yml"
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - "apps/web/lib/native/**"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "EAS build profile"
+        required: true
+        default: "preview"
+        type: choice
+        options: ["development", "preview", "production"]
+
+jobs:
+  typecheck:
+    name: Typecheck mobile app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @kimo/mobile typecheck
+
+  build:
+    name: EAS build (${{ github.event.inputs.profile || 'preview' }})
+    needs: typecheck
+    # Same reasoning as the desktop workflow: full native builds cost
+    # real EAS build minutes, so only run them on a tag push or when
+    # explicitly requested — not on every PR.
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build both platforms
+        working-directory: apps/mobile
+        run: |
+          eas build --platform all \
+            --profile ${{ github.event.inputs.profile || 'preview' }} \
+            --non-interactive --no-wait
