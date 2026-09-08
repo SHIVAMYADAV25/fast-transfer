@@ -101,6 +101,7 @@ const desktopSteps: TourStep[] = [
 const mobileSteps: TourStep[] = [
   {
     target: null,
+    switchTo: "send",
     title: "Quick tour, I promise.",
     body: "A quick walk-through and you'll know exactly how kimo works on your phone.",
   },
@@ -129,15 +130,16 @@ const mobileSteps: TourStep[] = [
     body: "Whoever's catching the file uses this panel — they just need the code from the sender's side.",
     side: "bottom",
   },
-  {
-    target: "mobile-toggle",
-    switchTo: "send",
-    title: "And this switch brings you back.",
-    body: "Flipping back to Send so we can walk through a real transfer, start to finish.",
-    side: "bottom",
-  },
+  // {
+  //   target: "mobile-toggle",
+  //   switchTo: "send",
+  //   title: "And this switch brings you back.",
+  //   body: "Flipping back to Send so we can walk through a real transfer, start to finish.",
+  //   side: "bottom",
+  // },
   {
     target: "file-dropzone",
+    switchTo: "send",
     title: "Upload the file here.",
     body: "Drop a file in, or tap to choose one from your device.",
     side: "bottom",
@@ -154,15 +156,16 @@ const mobileSteps: TourStep[] = [
     body: "Send this code to the receiver — text it, say it out loud, however you like.",
     side: "bottom",
   },
-  {
-    target: "mobile-toggle",
-    switchTo: "receive",
-    title: "Now, flip over to Receive.",
-    body: "This switch takes you to the Receiver — that's where the sender's code goes next.",
-    side: "bottom",
-  },
+  // {
+  //   target: "mobile-toggle",
+  //   switchTo: "receive",
+  //   title: "Now, flip over to Receive.",
+  //   body: "This switch takes you to the Receiver — that's where the sender's code goes next.",
+  //   side: "bottom",
+  // },
   {
     target: "receive-input",
+    switchTo: "receive",
     title: "Paste the sender's code here.",
     body: "Drop in the code you were just sent.",
     side: "bottom",
