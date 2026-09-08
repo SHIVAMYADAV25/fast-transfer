@@ -10,6 +10,8 @@
     "dev:mobile": "pnpm --filter @fast-transfer/mobile start",
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm --filter @fast-transfer/web build",
-    "build:desktop": "pnpm --filter @fast-transfer/desktop build"
+    "build:desktop": "pnpm --filter @fast-transfer/desktop build",
+    "dev:landing": "pnpm --filter @fast-transfer/landingpage dev",
+    "build:landing": "pnpm --filter @fast-transfer/landingpage build"
   }
 }
