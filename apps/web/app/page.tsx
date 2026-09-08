@@ -1443,7 +1443,7 @@ return (
             Send
           </h2>
           <p className="ml-2 text-xs font-medium text-[#555555] leading-snug">
-            Choose several files. Share one croc code.
+            Choose several files. Share one code.
           </p>
         </div>
       </div>
@@ -1686,14 +1686,14 @@ return (
         Send button — same spot referenced in the "Desktop & mobile, on the
         way" tutorial step (components/tutorial-modal.tsx). */}
 
-    <div className="mt-2 w-full sm:hidden">
+    {/* <div className="mt-2 w-full sm:hidden">
       <img
         src="/best-cat.png" // replace with your image path
         alt=""
         draggable={false}
         className="w-full h-auto object-contain pointer-events-none select-none"
       />
-    </div>
+    </div> */}
 
   </div>
 );
