@@ -4,22 +4,9 @@
 import type { PeerRole, SignalingMessage } from "@fast-transfer/protocol";
 
 const SIGNALING_HTTP_URL =
-  process.env.NEXT_PUBLIC_SIGNALING_HTTP_URL || "http://localhost:8787";
+  process.env.NEXT_PUBLIC_SIGNALING_HTTP_URL ?? "http://localhost:8787";
 const SIGNALING_WS_URL =
-  process.env.NEXT_PUBLIC_SIGNALING_WS_URL || "ws://localhost:8787";
-
-if (typeof window !== "undefined" && !process.env.NEXT_PUBLIC_SIGNALING_HTTP_URL) {
-  // Baked in at build time for static exports (desktop/mobile) — if this
-  // fires in a packaged build, the GitHub Actions repo variable
-  // NEXT_PUBLIC_SIGNALING_HTTP_URL was empty/unset when it was built,
-  // and every /room call will silently hit the app's own asset server
-  // instead of the signaling worker.
-  console.warn(
-    "[kimo] NEXT_PUBLIC_SIGNALING_HTTP_URL was not set at build time — " +
-      `falling back to ${SIGNALING_HTTP_URL}. This is fine for local dev, ` +
-      "but a packaged build needs the real signaling worker URL baked in.",
-  );
-}
+  process.env.NEXT_PUBLIC_SIGNALING_WS_URL ?? "ws://localhost:8787";
 
 /**
  * How often we ping the room's WebSocket while it's open. This is the fix
