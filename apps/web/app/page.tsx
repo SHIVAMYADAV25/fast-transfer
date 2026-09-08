@@ -415,7 +415,12 @@ export default function HomePage() {
 
       {/* Hand-drawn "how this works" walkthrough, opened from the help
           icon in the header (see nav below). */}
-      <TutorialModal open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
+      <TutorialModal
+        open={tutorialOpen}
+        onClose={() => setTutorialOpen(false)}
+        mobileView={mobileView}
+        setMobileView={setMobileView}
+      />
 
       <div className="mx-auto max-w-5xl z-10 relative pt-4 px-4 sm:px-6 lg:px-8">
         <header className="mb-2 flex items-center justify-between gap-2">
@@ -674,7 +679,7 @@ interface MobileViewToggleProps {
 // already shows both panels side by side.
 function MobileViewToggle({ view, setView }: MobileViewToggleProps) {
   return (
-    <div className="mb-4 w-full sm:hidden">
+    <div className="mb-4 w-full sm:hidden" data-tour="mobile-toggle">
       <div className="flex h-11 w-full overflow-hidden rounded-md border-2 border-[#dcdbdb] bg-transparent">
         <button
           type="button"

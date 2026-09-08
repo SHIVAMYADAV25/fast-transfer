@@ -88,12 +88,21 @@ const desktopSteps: TourStep[] = [
 // ---------------------------------------------------------------------------
 // Mobile flow — only one panel is ever on screen, so the tour has to teach
 // the toggle first, then flip it for you as it moves between panels.
+//
+// Every panel switch gets its own dedicated step first: it highlights the
+// toggle itself (not the panel/input on the other side, which isn't visible
+// yet) and explains that it's about to flip. Only the *next* step, once the
+// new panel is actually on screen, highlights that panel. Combining "explain
+// the switch" and "highlight the not-yet-visible target" in one step used to
+// cause a visible flash (spotlight briefly vanishing) and, worse, highlighted
+// the wrong thing (e.g. the code input lit up while the copy still talked
+// about switching over to it).
 // ---------------------------------------------------------------------------
 const mobileSteps: TourStep[] = [
   {
     target: null,
     title: "Quick tour, I promise.",
-    body: "A dozen quick beats and you'll know exactly how kimo works on your phone.",
+    body: "A quick walk-through and you'll know exactly how kimo works on your phone.",
   },
   {
     target: "mobile-toggle",
@@ -103,23 +112,29 @@ const mobileSteps: TourStep[] = [
   },
   {
     target: "send-panel",
-    switchTo: "send",
     title: "This is the Sender.",
     body: "Everything you need to send a file lives here — pick files, get a code, watch it fly.",
     side: "bottom",
   },
   {
-    target: "receive-panel",
+    target: "mobile-toggle",
     switchTo: "receive",
+    title: "This switch takes you to Receiver.",
+    body: "Let's flip over and take a look at the other side.",
+    side: "bottom",
+  },
+  {
+    target: "receive-panel",
     title: "And this is the Receiver.",
     body: "Whoever's catching the file uses this panel — they just need the code from the sender's side.",
     side: "bottom",
   },
   {
-    target: null,
+    target: "mobile-toggle",
     switchTo: "send",
-    title: "Let's actually send something.",
-    body: "Hopping back over to Send so we can walk through a real transfer, start to finish.",
+    title: "And this switch brings you back.",
+    body: "Flipping back to Send so we can walk through a real transfer, start to finish.",
+    side: "bottom",
   },
   {
     target: "file-dropzone",
@@ -134,16 +149,16 @@ const mobileSteps: TourStep[] = [
     side: "top",
   },
   {
-    target: "code-area",
-    title: "Your code shows up here.",
+    target: null,
+    title: "Your code shows",
     body: "Send this code to the receiver — text it, say it out loud, however you like.",
     side: "bottom",
   },
   {
-    target: "receive-input",
+    target: "mobile-toggle",
     switchTo: "receive",
-    title: "Now, over to Receive.",
-    body: "Flipping the toggle to the Receiver side — this is where that code goes.",
+    title: "Now, flip over to Receive.",
+    body: "This switch takes you to the Receiver — that's where the sender's code goes next.",
     side: "bottom",
   },
   {
@@ -165,7 +180,7 @@ const mobileSteps: TourStep[] = [
   },
 ];
 
-const SEEN_KEY = "kimo-tutorial-seen-v1";
+const SEEN_KEY = "kimo-tutorial-seen-v2";
 const GAP = 10;
 const CALLOUT_GAP = 16;
 const CARD_ESTIMATED_HEIGHT = 220;
@@ -192,12 +207,16 @@ interface Rect {
   height: number;
 }
 
-const FALLBACK_RECT: Rect = { top: -9999, left: -9999, width: 0, height: 0 };
-
 export function TutorialModal({ open, onClose, mobileView = "send", setMobileView }: TutorialModalProps) {
   const [step, setStep] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  // True only when the current step names a target but that element
+  // can't actually be found in the DOM (e.g. a missing data-tour
+  // attribute). Used to fail safe into a centered card instead of
+  // parking the spotlight thousands of pixels off-screen, which used to
+  // leave the whole tour looking broken with no way to reach Next.
+  const [targetMissing, setTargetMissing] = useState(false);
 
   // Track the same breakpoint MobileViewToggle uses, so the tour picks the
   // matching flow and re-checks on rotation/resize.
@@ -210,16 +229,31 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
   }, []);
 
   const steps = isMobile ? mobileSteps : desktopSteps;
-  const current = steps[step];
+  // Clamp defensively at render time, not just via the reset effect below.
+  // Effects run *after* render, so if `isMobile` flips (resize, rotation,
+  // DevTools width change) while `step` is still an index valid only for
+  // the other flow's (longer) step array, `steps[step]` would be
+  // `undefined` for that one render — and reading `.switchTo` off of it
+  // crashes before the effect ever gets a chance to reset `step` to 0.
+  const safeStep = Math.min(step, steps.length - 1);
+  const current = steps[safeStep];
   const total = steps.length;
-  const isFirst = step === 0;
-  const isLast = step === total - 1;
+  const isFirst = safeStep === 0;
+  const isLast = safeStep === total - 1;
 
   // Mobile only: if this step needs a particular panel showing first, flip
   // the toggle. Until the panel actually switches, treat the step as if it
   // had no target (a plain dimmed card) instead of drawing a spotlight
   // around a still-hidden, zero-size element.
-  const pendingSwitch = Boolean(current.switchTo) && mobileView !== current.switchTo;
+  //
+  // Exception: the toggle itself (data-tour="mobile-toggle") is always on
+  // screen regardless of which panel is showing, so a step that highlights
+  // the toggle while triggering a switch should keep its spotlight the
+  // whole time — treating it as "pending" caused the spotlight to
+  // disappear and reappear as the switch completed, which read as a
+  // background glitch.
+  const pendingSwitch =
+    Boolean(current.switchTo) && mobileView !== current.switchTo && current.target !== "mobile-toggle";
   const hasTarget = current.target !== null && !pendingSwitch;
 
   useEffect(() => {
@@ -236,13 +270,16 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
   const measure = useCallback(() => {
     if (!hasTarget || !current.target) {
       setRect(null);
+      setTargetMissing(false);
       return;
     }
     const el = document.querySelector<HTMLElement>(`[data-tour="${current.target}"]`);
     if (!el) {
-      setRect(FALLBACK_RECT);
+      setRect(null);
+      setTargetMissing(true);
       return;
     }
+    setTargetMissing(false);
     const r = el.getBoundingClientRect();
     setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
   }, [current.target, hasTarget]);
@@ -282,6 +319,11 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
 
   if (!open) return null;
 
+  // What actually gets rendered: a real target was requested, it isn't
+  // pending a panel switch, AND it was found in the DOM. Any failure of
+  // those falls back to a plain centered card — never an off-screen one.
+  const showSpotlight = hasTarget && !targetMissing;
+
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
 
@@ -303,7 +345,7 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
   // Desktop positioning — exactly as before. Tries beside the target first
   // (left/right), falls back to above/below, centered under the target.
   const getCardStyleDesktop = (): React.CSSProperties => {
-    if (!hasTarget) {
+    if (!showSpotlight) {
       return { top: "50%", left: "50%", transform: "translate(-50%, -50%)" };
     }
 
@@ -343,7 +385,7 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
   // pinned to the center of the screen (not the target's x-position), which
   // is what keeps the card from clipping off narrow viewport edges.
   const getCardStyleMobile = (): React.CSSProperties => {
-    if (!hasTarget) {
+    if (!showSpotlight) {
       return { top: "50%", left: "50%", transform: "translate(-50%, -50%)" };
     }
 
@@ -366,8 +408,33 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
 
   const getCardStyle = isMobile ? getCardStyleMobile : getCardStyleDesktop;
 
-  const dimStripBase =
-    "absolute bg-[#141414]/55 backdrop-blur-[2px] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]";
+  // Single dim overlay with a rectangular hole cut out via clip-path,
+  // instead of four separately-positioned/animated divs. The old 4-strip
+  // technique — each strip independently transitioning its own
+  // top/left/width/height — was still producing a mirrored/duplicated
+  // ghost frame mid-transition even after removing backdrop-blur, because
+  // four separately animating layout boxes can visibly tear/seam for a
+  // frame or two as they resize past each other. A single element whose
+  // shape is described by one clip-path has nothing to tear against.
+  //
+  // The hole is punched using a "keyhole" polygon: trace the outer
+  // full-screen rectangle, bridge in to the inner spotlight rectangle,
+  // trace around it, then bridge back out along the same seam. That
+  // produces one continuous path that clip-path's default winding rule
+  // renders as "outer rect minus inner rect" — no evenodd/path() support
+  // needed, so it works everywhere clip-path: polygon() does.
+  const getOverlayClipPath = (): string | undefined => {
+    if (!showSpotlight) return undefined;
+    const left = Math.max(0, box.left);
+    const top = Math.max(0, box.top);
+    const right = box.left + box.width;
+    const bottom = box.top + box.height;
+    return `polygon(
+      0 0, ${vw}px 0, ${vw}px ${vh}px, 0 ${vh}px, 0 ${top}px,
+      ${left}px ${top}px, ${left}px ${bottom}px, ${right}px ${bottom}px,
+      ${right}px ${top}px, ${left}px ${top}px, 0 ${top}px
+    )`;
+  };
 
   return (
     <div
@@ -375,7 +442,7 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
       role="dialog"
       aria-modal="true"
       aria-label="How kimo works"
-      onClick={!hasTarget ? onClose : undefined}
+      onClick={!showSpotlight ? onClose : undefined}
     >
       <svg className="absolute h-0 w-0" aria-hidden="true">
         <defs>
@@ -386,22 +453,10 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
         </defs>
       </svg>
 
-      {!hasTarget ? (
-        <div className="absolute inset-0 bg-[#141414]/50 backdrop-blur-[3px] transition-opacity duration-300" />
-      ) : (
-        <>
-          <div className={dimStripBase} style={{ top: 0, left: 0, width: "100%", height: Math.max(0, box.top) }} />
-          <div
-            className={dimStripBase}
-            style={{ top: box.top + box.height, left: 0, width: "100%", height: Math.max(0, vh - (box.top + box.height)) }}
-          />
-          <div className={dimStripBase} style={{ top: box.top, left: 0, width: Math.max(0, box.left), height: box.height }} />
-          <div
-            className={dimStripBase}
-            style={{ top: box.top, left: box.left + box.width, width: Math.max(0, vw - (box.left + box.width)), height: box.height }}
-          />
-        </>
-      )}
+      <div
+        className="absolute inset-0 bg-[#141414]/65 transition-[clip-path] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ clipPath: getOverlayClipPath() }}
+      />
 
       <div
         className="absolute w-[92vw] max-w-sm px-1 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
@@ -432,7 +487,7 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
 
             <div className="flex items-center justify-between gap-3">
               <span className="shrink-0 text-xs font-medium text-[#8a8577]">
-                {step + 1} / {total}
+                {safeStep + 1} / {total}
               </span>
 
               <div className="flex items-center gap-2">
@@ -463,7 +518,7 @@ export function TutorialModal({ open, onClose, mobileView = "send", setMobileVie
                   aria-label={`Go to step ${i + 1}`}
                   onClick={() => setStep(i)}
                   className="h-1.5 rounded-full transition-all"
-                  style={{ width: i === step ? 16 : 6, backgroundColor: i === step ? "#141414" : "#d8d3c8" }}
+                  style={{ width: i === safeStep ? 16 : 6, backgroundColor: i === safeStep ? "#141414" : "#d8d3c8" }}
                 />
               ))}
             </div>
