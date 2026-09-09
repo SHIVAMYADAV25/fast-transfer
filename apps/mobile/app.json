@@ -14,9 +14,11 @@
       "resizeMode": "contain",
       "backgroundColor": "#FDF8EE"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "bundleIdentifier": "com.kimo.app",
+      "bundleIdentifier": "com.shivamyadav.kimo",
       "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
@@ -25,7 +27,7 @@
       }
     },
     "android": {
-      "package": "com.kimo.app",
+      "package": "com.shivamyadav.kimo",
       "adaptiveIcon": {
         "backgroundColor": "#FDF8EE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -37,11 +39,14 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-splash-screen"],
+    "plugins": [
+      "expo-splash-screen"
+    ],
     "extra": {
       "eas": {
-        "projectId": "REPLACE_WITH_YOUR_EAS_PROJECT_ID"
+        "projectId": "0d79ade5-a79f-4f11-be5c-884d6d5134a1"
       }
-    }
+    },
+    "owner": "shivamdotdev"
   }
 }
