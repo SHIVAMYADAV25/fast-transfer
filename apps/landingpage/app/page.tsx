@@ -963,7 +963,14 @@ const DownloadModal = ({
           },
         ]
       : [
-          { id: 'android', label: 'Android', icon: <AndroidIcon />, bgColor: '#C0D8B6', href: ANDROID_DOWNLOAD_URL, note: 'via Expo' },
+          {
+  id: 'android',
+  label: 'Android',
+  icon: <AndroidIcon />,
+  bgColor: '#C0D8B6',
+  href: 'https://expo.dev/accounts/shivamdotdev/projects/kimo/builds/eeb46a10-1486-4741-95dd-1c3c04bc35a3',
+  note: 'Download',
+},
           { id: 'ios', label: 'iOS', icon: <AppleIcon />, bgColor: '#F5E1C3', disabled: true, note: 'Coming soon' },
         ];
 
