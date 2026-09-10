@@ -10,7 +10,7 @@
     "backgroundColor": "#FDF8EE",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#FDF8EE"
     },
@@ -23,7 +23,8 @@
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false
-        }
+        },
+        // "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -37,10 +38,17 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/icon.png"
     },
     "plugins": [
-      "expo-splash-screen"
+      "expo-splash-screen",
+      [
+        "expo-share-intent",
+        {
+          "androidIntentFilters": ["*/*"],
+          "androidMultiIntentFilters": ["*/*"]
+        }
+      ]
     ],
     "extra": {
       "eas": {

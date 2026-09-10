@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "prebuild": "expo prebuild",
     "build:android": "eas build --platform android",
-    "build:ios": "eas build --platform ios"
+    "build:ios": "eas build --platform ios",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "expo": "~54.0.37",
@@ -24,7 +25,9 @@
     "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-webview": "13.15.0",
-    "react-native-safe-area-context": "~5.6.0"
+    "react-native-safe-area-context": "~5.6.0",
+    "expo-share-intent": "^5.1.0",
+    "patch-package": "^8.0.0"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",

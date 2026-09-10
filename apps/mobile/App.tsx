@@ -15,6 +15,7 @@ import WebView, { type WebViewMessageEvent, type WebViewNavigation } from "react
 // supported (not deprecated) for that use case.
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { useShareIntent } from "expo-share-intent";
 
 import { WEB_URL } from "./config";
 import { LoadingOverlay } from "./components/LoadingOverlay";
@@ -31,15 +32,24 @@ import { OfflineView } from "./components/OfflineView";
  * the deployed site, which already has the responsive mobile layout
  * built in (see apps/web's Tailwind breakpoints).
  *
- * The one native addition is the file-save bridge below: WebViews can't
- * trigger a real "save to disk" the way a desktop browser can, so
- * apps/web's `lib/native/save.ts` detects `window.ReactNativeWebView`
- * and posts the finished file over as base64 instead of doing the usual
- * `<a download>` click-simulation trick. This app receives that message,
- * writes it to a temp file via expo-file-system, and hands it to the
- * OS's native share sheet (Sharing.shareAsync) — which is the standard
- * "save this file somewhere" pattern on both iOS and Android, letting
- * the person save to Files/Drive/AirDrop/etc.
+ * There are two native bridges layered on top of the WebView:
+ *
+ * 1. Save bridge (WebView -> native): apps/web's `lib/native/save.ts`
+ *    detects `window.ReactNativeWebView` and posts the finished file
+ *    over as base64 instead of doing the usual `<a download>`
+ *    click-simulation trick. This app receives that message, writes it
+ *    to a temp file via expo-file-system, and hands it to the OS's
+ *    native share sheet (Sharing.shareAsync) so the person can save it
+ *    to Files/Drive/AirDrop/etc.
+ *
+ * 2. Incoming-share bridge (native -> WebView): this is what makes Kimo
+ *    show up as a target in the Android/iOS Sharesheet. `expo-share-intent`
+ *    (config plugin in app.json) registers the native intent filters;
+ *    `useShareIntent()` below surfaces whatever was shared as local file
+ *    URIs. We read each one into base64 via expo-file-system and post it
+ *    into the WebView, where apps/web's `lib/native/incoming-share.ts`
+ *    picks it up and drops the file(s) straight into the Send panel, as
+ *    if the person had picked them from the file dropzone themselves.
  */
 export default function App() {
   const webviewRef = useRef<WebView>(null);
@@ -47,6 +57,13 @@ export default function App() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  // The WebView isn't ready to receive postMessage()s until it's finished
+  // its first load — if the app was cold-started *by* a share (user shared
+  // straight from the Sharesheet with Kimo not already running), the share
+  // intent can be available before that happens, so we wait for both.
+  const [webviewReady, setWebviewReady] = useState(false);
+
+  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
 
   const handleNavigationStateChange = useCallback((nav: WebViewNavigation) => {
     setCanGoBack(nav.canGoBack);
@@ -99,6 +116,52 @@ export default function App() {
     }
   }, []);
 
+  // When a share intent is present, read every shared file into base64 and
+  // hand it to the web app. Runs again each time `shareIntent` changes
+  // (the native side is configured with singleTask launch mode, so sharing
+  // again while Kimo is already open re-fires this with the new files).
+  useEffect(() => {
+
+    const files = shareIntent.files;
+
+    if (!hasShareIntent || !webviewReady || !files || files.length === 0) {
+      return;
+    }
+
+    // if (!hasShareIntent || !webviewReady || shareIntent.files.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const incomingFiles  = await Promise.all(
+          files.map(async (f) => ({
+            name: f.fileName || sanitizeFileName(f.path.split("/").pop() ?? "shared-file"),
+            mimeType: f.mimeType || "application/octet-stream",
+            base64: await FileSystem.readAsStringAsync(f.path, {
+              encoding: FileSystem.EncodingType.Base64,
+            }),
+          })),
+        );
+        if (cancelled) return;
+        webviewRef.current?.postMessage(JSON.stringify({ type: "INCOMING_SHARE", incomingFiles }));
+      } catch (err) {
+        if (!cancelled) {
+          Alert.alert(
+            "Couldn't open shared file",
+            err instanceof Error ? err.message : "Something went wrong reading the shared file.",
+          );
+        }
+      } finally {
+        if (!cancelled) resetShareIntent();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasShareIntent, shareIntent, webviewReady, resetShareIntent]);
+
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
@@ -121,7 +184,10 @@ export default function App() {
               onNavigationStateChange={handleNavigationStateChange}
               onMessage={handleMessage}
               onLoadStart={() => setLoading(true)}
-              onLoadEnd={() => setLoading(false)}
+              onLoadEnd={() => {
+                setLoading(false);
+                setWebviewReady(true);
+              }}
               onError={() => setLoadFailed(true)}
               onHttpError={(e) => {
                 // Only treat the top-level document failing to load as a
