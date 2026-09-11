@@ -2413,6 +2413,7 @@ import { STORED_TRANSFER_DEFAULT_TTL_MS } from "@fast-transfer/protocol";
 import type { StoredManifest } from "@fast-transfer/protocol";
 import { formatBytes } from "@/lib/format";
 import { TutorialModal, useTutorialAutoOpen } from "@/components/tutorial-modal";
+import { onIncomingSharedFiles } from "@/lib/native/incoming-share";
 
 type SendPhase = "idle" | "waiting" | "connecting" | "sending" | "reconnecting" | "done" | "error";
 type ReceivePhase = "idle" | "connecting" | "receiving" | "verifying" | "reconnecting" | "done" | "error";
@@ -2805,6 +2806,19 @@ export default function HomePage() {
     }
   }, []);
 
+  // Files shared into the mobile app via the OS Sharesheet (see
+  // lib/native/incoming-share.ts). Each share is wrapped with a fresh id
+  // so SendPanel can tell "new share just arrived" apart from "this prop
+  // object happens to be the same reference on a re-render" and only add
+  // each batch of files once.
+  const [incomingShare, setIncomingShare] = useState<{ id: number; files: File[] } | null>(null);
+  useEffect(() => {
+    return onIncomingSharedFiles((files) => {
+      setIncomingShare({ id: Date.now(), files });
+      setMobileView("send");
+    });
+  }, []);
+
   return (
     <main className="relative min-h-screen w-full overflow-hidden text-[#1a1a1a]">
       {/* Background Image */}
@@ -3020,7 +3034,7 @@ export default function HomePage() {
       mobileView === "send" ? "flex" : "hidden"
     } sm:flex`}
   >
-    <SendPanel turnOverride={turnOverride} />
+    <SendPanel turnOverride={turnOverride} incomingShare={incomingShare} />
   </div>
 
   {/* Center Divider Line */}
@@ -3506,8 +3520,23 @@ function SketchedBackground({ mode = "light", className = "" }: SketchedBackgrou
 // Send panel
 // ---------------------------------------------------------------------------
 
-function SendPanel({ turnOverride }: { turnOverride: TurnOverride | null }) {
+function SendPanel({
+  turnOverride,
+  incomingShare,
+}: {
+  turnOverride: TurnOverride | null;
+  incomingShare?: { id: number; files: File[] } | null;
+}) {
   const [files, setFiles] = useState<File[]>([]);
+  // Tracks which incomingShare.id we've already merged in, so re-renders
+  // that pass the same object don't duplicate the files, while a genuinely
+  // new share (fresh id) still gets appended.
+  const lastIncomingShareId = useRef<number | null>(null);
+  useEffect(() => {
+    if (!incomingShare || incomingShare.id === lastIncomingShareId.current) return;
+    lastIncomingShareId.current = incomingShare.id;
+    setFiles((prev) => [...prev, ...incomingShare.files]);
+  }, [incomingShare]);
   const [phase, setPhase] = useState<SendPhase>("idle");
   const [code, setCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
