@@ -14,8 +14,9 @@ separate reimplementations. See `apps/desktop/README.md` and
 instructions.
 
 Status: **All PRD milestones built** — two browsers can pair via a code and
-transfer files directly over WebRTC (single or, toggle-enabled, up to 4
-parallel `RTCPeerConnection`s), with chunking, backpressure, adaptive
+transfer files directly over WebRTC (1 to 4 parallel `RTCPeerConnection`s,
+chosen automatically from transfer size, with a manual override to force
+the max for benchmarking), with chunking, backpressure, adaptive
 windows, live speed/ETA, SHA-256 verification, a `getStats()` benchmark
 harness, configurable TURN fallback, and automatic reconnect-and-resume —
 **plus stored/async transfers** (croc-style: encrypt locally, upload only
