@@ -146,17 +146,31 @@ a transfer actually works — read §4 alongside it.
 ### `apps/web/lib/webrtc/adaptive.ts` — `AdaptiveWindowController`
 A simple hill-climbing probe that grows or shrinks the sender's
 backpressure window based on measured throughput, instead of using one
-fixed guess for every network (§7.2).
+fixed guess for every network (§7.2). The starting point isn't a flat
+512KB anymore either — it takes an optional one-shot RTT sample (from
+`stats.ts`'s `sampleRttMs()`, read right after the data channel opens) and
+picks a larger starting window for low-RTT links, so a fast LAN connection
+doesn't spend its first several seconds hill-climbing up from a
+conservative guess it was never going to need. Falls back to the original
+512KB start whenever no RTT sample is available yet.
 
 ### `apps/web/lib/webrtc/hash.ts`
 Wraps `@noble/hashes`' **incremental** SHA-256 API. Exists because Web
 Crypto's `crypto.subtle.digest()` is one-shot only — it can't hash data as
-it streams in, which is what `sendFiles()` needs (§7.1).
+it streams in, which is what `sendFiles()` needs (§7.1). The actual hash
+compute runs on a dedicated Web Worker (`hash-worker.ts`) in real browsers,
+so it doesn't compete with WebRTC send calls and UI updates for main-thread
+CPU time; falls back to the original synchronous main-thread
+implementation wherever `Worker` isn't available (e.g. the Node test
+environment `transfer-e2e-test.mts` runs in).
 
-### `apps/web/lib/webrtc/stats.ts` — `StatsMonitor`
-Polls `RTCPeerConnection.getStats()` every second and extracts the two
-numbers that matter for judging performance: RTT, and whether the winning
-ICE candidate pair is direct or relayed.
+### `apps/web/lib/webrtc/stats.ts` — `StatsMonitor` / `sampleRttMs()`
+`StatsMonitor` polls `RTCPeerConnection.getStats()` every second and
+extracts the two numbers that matter for judging performance: RTT, and
+whether the winning ICE candidate pair is direct or relayed. `sampleRttMs()`
+is the one-shot counterpart — a single RTT read used to seed
+`AdaptiveWindowController`'s starting window (see above) rather than the
+continuous per-second UI feed.
 
 ### `apps/web/lib/webrtc/ice-config.ts`
 Builds the ICE server list (STUN always; TURN if configured via env vars
@@ -367,7 +381,10 @@ with zero progress shown. Fixed with an incremental hasher
 hashing and sending happen concurrently instead of hashing blocking
 sending. The final hash is only known once the last chunk is read, so it's
 sent with `TRANSFER_COMPLETE` (after the last chunk) instead of
-`FILE_METADATA` (before the first).
+`FILE_METADATA` (before the first). The producer also reads one chunk
+ahead of the one it's currently hashing/queueing, so a chunk's file read
+starts immediately rather than waiting for the previous chunk's hashing
+and queueing to finish first — same idea applied one level deeper.
 
 ### 7.3 — Chunking with real backpressure
 **File:** `sendFiles()` in `transfer.ts`.
@@ -387,9 +404,9 @@ back off once it drops, hold once it plateaus. A slow/high-latency
 international link and a fast local link end up with genuinely different
 windows instead of the same guessed constant.
 
-### 7.5 — Multi-connection parallelism (experimental, opt-in)
+### 7.5 — Multi-connection parallelism (automatic by size, manual override available)
 **File:** `lib/webrtc/multi-peer.ts`, the round-robin chunk distribution in
-`sendFiles()`.
+`sendFiles()`, wired into `app/page.tsx`'s `establishAndRun()`.
 Here's a subtlety worth understanding: opening multiple `RTCDataChannel`s
 on **one** `RTCPeerConnection` does **not** give you parallelism in any
 meaningful sense — they all share one SCTP association, one DTLS session,
@@ -399,8 +416,15 @@ longer to ramp up) requires **multiple independent `RTCPeerConnection`s**,
 each with its own ICE/DTLS/SCTP handshake and its own congestion control.
 That's what this does — up to 4 independent connections, chunks
 round-robined across them, each with its own `AdaptiveWindowController`.
-It's **off by default** and framed as something to benchmark, not assume —
-the extra connection-setup overhead may not pay off on every network.
+
+The connection count is chosen automatically from the batch's total size
+via `chooseConnectionCount()` — small batches stay on 1 connection (the
+extra ICE/DTLS/SCTP handshake per connection isn't worth it below ~8MB),
+larger batches get 2 or the full 4. The in-app checkbox does **not** turn
+this on/off; it forces the full `MAX_PARALLEL_CONNECTIONS` regardless of
+size, as a manual override for benchmarking against the automatic choice —
+useful since the extra connection-setup overhead's payoff genuinely varies
+by network and isn't something to assume blindly for every link.
 
 ### 7.6 — Dynamic, per-connection chunk sizing
 **File:** `resolveChunkSize()` and `getMaxMessageSize()` in `transfer.ts`/`peer.ts`.

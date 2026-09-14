@@ -5,6 +5,18 @@
  * system. `apps/signaling` (Cloudflare Worker/DO) and `apps/web` (Next.js)
  * both import from here. Never redefine these shapes locally in either app —
  * if the two drift, signaling breaks in ways that are annoying to debug.
+ *
+ * v2 changes (see FAST-TRANSFER-V2-ARCHITECTURE.md):
+ *   - SignalingMessageType gains "ADD_CONNECTION" — the sender announces a
+ *     new connectionIndex mid-transfer instead of the fixed up-front CONFIG
+ *     count, so extra parallel connections are opened only when an RTT
+ *     measurement actually justifies them (multi-peer.ts's
+ *     decideAdditionalConnections()).
+ *   - FileMetadata gains an optional `compressed` flag so the receiver knows
+ *     a file's chunks may be individually deflate-compressed on the wire
+ *     (compression.ts) — the flag describes intent; each chunk's own frame
+ *     header still carries the authoritative per-chunk bit, since
+ *     compression is decided (and may fail to help) per chunk.
  */
 
 // ---------------------------------------------------------------------------
@@ -21,9 +33,14 @@ export type SignalingMessageType =
   | "JOIN" // client -> server: "I am the sender/receiver for this room"
   | "PEER_JOINED" // server -> client: the other side just connected
   | "PEER_LEFT" // server -> client: the other side disconnected
-  | "CONFIG" // sender -> receiver: "expect N RTCPeerConnections" — lets the
-  // receiver open exactly that many instead of eagerly opening a fixed max
-  // and pruning unused slots (see multi-peer.ts)
+  | "CONFIG" // sender -> receiver: "expect N RTCPeerConnections up front"
+  // (v1 behavior, kept for the initial connection only — see ADD_CONNECTION
+  // for how v2 adds more mid-transfer instead of guessing all of them here)
+  | "ADD_CONNECTION" // sender -> receiver: "open one more RTCPeerConnection
+  // at this connectionIndex" — sent only after the first connection's RTT
+  // is known to actually justify the extra ICE/DTLS handshake cost
+  // (multi-peer.ts's decideAdditionalConnections()). Payload:
+  // AddConnectionPayload.
   | "OFFER" // sender -> server -> receiver: SDP offer
   | "ANSWER" // receiver -> server -> sender: SDP answer
   | "ICE_CANDIDATE" // either direction: ICE candidate relay
@@ -53,7 +70,7 @@ export interface SignalingMessage {
 
 // These mirror the shape of the browser's native RTCSessionDescriptionInit /
 // RTCIceCandidateInit, but are declared locally (rather than importing the
-// DOM lib types) so this package stays environment-agnostic — it's imported
+// DOM lib type) so this package stays environment-agnostic — it's imported
 // by both the Cloudflare Worker (no DOM lib) and the Next.js app (has DOM lib).
 export interface SdpDescription {
   type: "offer" | "answer" | "pranswer" | "rollback";
@@ -81,6 +98,11 @@ export interface IceCandidatePayload {
 
 export interface ConfigPayload {
   connectionCount: number;
+}
+
+/** Payload for the v2 ADD_CONNECTION signaling message. */
+export interface AddConnectionPayload {
+  connectionIndex: number;
 }
 
 export interface ErrorPayload {
@@ -127,6 +149,14 @@ export interface FileMetadata {
   totalChunks: number;
   sha256?: string; // populated once sender finishes hashing (may lag metadata send)
   mimeType?: string;
+  /**
+   * v2: hint that this file's chunks may individually be deflate-compressed
+   * on the wire (see lib/webrtc/compression.ts). Informational only — each
+   * chunk's own frame header carries the authoritative per-chunk bit, since
+   * compression is attempted per chunk and skipped for any chunk it doesn't
+   * actually shrink.
+   */
+  compressed?: boolean;
 }
 
 export interface ChunkMeta {
