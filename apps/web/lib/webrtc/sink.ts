@@ -126,7 +126,7 @@ export class DiskSink implements FileSink {
 
 // ---------------------------------------------------------------------------
 
-/** True when this browser can write a received file straight to disk. */
+/** True when this browser can write a received file straight to disk via a single-file picker. */
 export function supportsDiskSink(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -162,6 +162,71 @@ export async function pickSaveHandle(
 }
 
 /**
+ * A folder the person picked once, that individual files get written into.
+ *
+ * A batch can be more than one file, and a save-file picker only ever
+ * produces one destination — asking for a fresh one per file would mean a
+ * native dialog for every file in the batch. A directory handle sidesteps
+ * that: pick it once, before connecting, and each file gets its own entry
+ * inside it as FILE_METADATA for it arrives.
+ */
+export interface WritableDirectoryHandle {
+  getFileHandle(
+    name: string,
+    options?: { create?: boolean },
+  ): Promise<WritableFileHandle>;
+}
+
+/** True when this browser can write straight to a chosen folder. */
+export function supportsDirectorySink(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof (window as unknown as { showDirectoryPicker?: unknown })
+      .showDirectoryPicker === "function"
+  );
+}
+
+/**
+ * Ask the person for a destination folder. Must be called from a user
+ * gesture, same as pickSaveHandle — the receive flow calls this as the
+ * first thing it does, before checkRoom or connecting, so the click that
+ * started the receive is still what triggers it.
+ *
+ * Returns null if unsupported or dismissed; callers fall back to memory.
+ */
+export async function pickSaveDirectory(): Promise<WritableDirectoryHandle | null> {
+  if (!supportsDirectorySink()) return null;
+  try {
+    const picker = (
+      window as unknown as {
+        showDirectoryPicker: (opts: {
+          mode?: "read" | "readwrite";
+        }) => Promise<WritableDirectoryHandle>;
+      }
+    ).showDirectoryPicker;
+    return await picker({ mode: "readwrite" });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The sender's file name is attacker-controlled data, not a trusted path
+ * component. The File System Access API itself already rejects names
+ * containing "/" or "..", but that surfaces as a thrown error rather than a
+ * safe file — sanitizing up front means a hostile or merely weird name
+ * degrades to "still saves the file" instead of "fails the whole transfer".
+ */
+function sanitizeFileName(name: string): string {
+  const cleaned = name
+    .replace(/[\\/]/g, "_")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f]/g, "")
+    .trim();
+  return cleaned.length > 0 ? cleaned.slice(0, 255) : "download";
+}
+
+/**
  * Factory handed to FileReceiver. Given the metadata for a file that's about
  * to arrive, decide where its bytes should go. Defaults to memory so every
  * existing caller keeps its current behaviour until it opts in.
@@ -174,3 +239,23 @@ export type SinkFactory = (meta: {
 
 export const memorySinkFactory: SinkFactory = (meta) =>
   new MemorySink(meta.name, meta.mimeType);
+
+/**
+ * Build a SinkFactory that writes every file in the batch into `dir`.
+ *
+ * A per-file failure (a name the filesystem rejects, a permission that
+ * lapsed mid-batch) falls back to a MemorySink for just that file rather
+ * than aborting the transfer — the person still gets the file, just via a
+ * download instead of straight to the folder they picked.
+ */
+export function directorySinkFactory(dir: WritableDirectoryHandle): SinkFactory {
+  return async (meta) => {
+    const name = sanitizeFileName(meta.name);
+    try {
+      const handle = await dir.getFileHandle(name, { create: true });
+      return new DiskSink(handle);
+    } catch {
+      return new MemorySink(name, meta.mimeType);
+    }
+  };
+}

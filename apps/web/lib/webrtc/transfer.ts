@@ -606,6 +606,12 @@ export async function sendFiles(
   },
   maxMessageSize?: number | null,
   signal?: AbortSignal,
+  /**
+   * Starting point for each channel's adaptive send window, normally
+   * AdaptiveWindowController.estimateInitialWindow(rttMs) computed from an
+   * RTT sample taken right after the connection opens. Omit to start cold.
+   */
+  initialWindowBytes?: number,
 ): Promise<void> {
   if (channels.length === 0) {
     throw new Error("sendFiles needs at least one open channel");
@@ -663,7 +669,9 @@ export async function sendFiles(
   try {
     const CHUNK_SIZE = resolveChunkSize(maxMessageSize);
 
-    const windows = channels.map(() => new AdaptiveWindowController());
+    const windows = channels.map(
+      () => new AdaptiveWindowController(initialWindowBytes),
+    );
 
     /**
      * Tell receiver the true batch shape.

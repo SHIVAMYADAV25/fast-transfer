@@ -19,23 +19,61 @@
  */
 
 /**
- * Ceiling was originally 64 MiB. In practice, `RTCDataChannel.bufferedAmount`
- * lags behind reality by enough that a hill-climbing window this large lets
- * the send loop fire far more `send()` calls than the browser's internal
- * SCTP send queue can actually hold, which is what threw
- * "Failed to execute 'send' on 'RTCDataChannel': RTCDataChannel send queue
- * is full" so often. Keeping the window well under that internal limit (plus
- * the retry/backoff in transfer.ts's safeSend for the rest) is the real fix
- * — 64 MiB was never a safe number to grow into.
+ * Ceiling was originally 64 MiB, then cut to 4 MiB because a window that
+ * large let the send loop fire far more `send()` calls than the browser's
+ * internal SCTP send queue could hold, throwing "RTCDataChannel send queue
+ * is full". That was the wrong fix for that problem: the queue-full error is
+ * transient backpressure, not a sign the window itself is unsafe, and
+ * transfer.ts's safeSend() now retries it with backoff instead of failing
+ * the transfer. So the 4 MiB ceiling has been solving an already-solved
+ * problem, while acting as a hard throughput cap everywhere else.
+ *
+ * Concretely: bandwidth-delay product at 1 Gbps with 100ms RTT is about
+ * 12.5 MiB. With a 4 MiB ceiling, no amount of tuning gets a connection on
+ * that kind of path past roughly 320 Mbps — the window physically cannot
+ * hold enough in flight to fill the pipe. Raising the ceiling back up (with
+ * safeSend covering the transient error) removes that artificial cap on
+ * exactly the long-fat-pipe links where it mattered most.
  */
 const MIN_WINDOW = 256 * 1024; // 256 KiB floor
-const MAX_WINDOW = 4 * 1024 * 1024; // 4 MiB ceiling — safe headroom under the browser's real limit
-const START_WINDOW = 512 * 1024; // conservative starting point
+const MAX_WINDOW = 32 * 1024 * 1024; // 32 MiB ceiling — bounds worst-case buffering, not throughput
+const START_WINDOW = 512 * 1024; // cold-start default when no RTT sample is available
 
 const GROW_FACTOR = 1.5;
 const BACKOFF_FACTOR = 0.6;
 const IMPROVEMENT_THRESHOLD = 0.08; // ignore noise under ~8% change
 const SAMPLE_INTERVAL_MS = 2000; // don't react to every single chunk — too noisy
+
+/**
+ * Baseline throughput assumed when seeding the initial window from a
+ * measured RTT (see estimateInitialWindow below). This is deliberately
+ * conservative rather than a real bandwidth estimate — we have no way to
+ * measure available bandwidth before sending anything — so it only matters
+ * on higher-latency paths, where a cold 512 KiB start would otherwise take
+ * several hill-climbing samples (each gated to one per SAMPLE_INTERVAL_MS)
+ * before the window is anywhere near the path's real bandwidth-delay
+ * product. On a low-latency LAN this assumption barely moves the seed at
+ * all, which is correct: LAN throughput is bounded by the per-connection
+ * SCTP ceiling (see ARCHITECTURE notes on transport), not by window size.
+ */
+const ASSUMED_BASELINE_BITS_PER_SEC = 100 * 1_000_000; // 100 Mbps
+
+/**
+ * Turn a one-shot RTT sample (see stats.ts's sampleRttMs) into a starting
+ * window size. Returns the cold-start default when no sample is available —
+ * this is always safe to call, including with null.
+ */
+export function estimateInitialWindow(rttMs: number | null): number {
+  if (rttMs == null || !Number.isFinite(rttMs) || rttMs <= 0) {
+    return START_WINDOW;
+  }
+
+  const bdpEstimate = (ASSUMED_BASELINE_BITS_PER_SEC / 8) * (rttMs / 1000);
+
+  return Math.round(
+    Math.min(MAX_WINDOW, Math.max(START_WINDOW, bdpEstimate)),
+  );
+}
 
 export interface WindowSample {
   windowBytes: number;
@@ -44,10 +82,22 @@ export interface WindowSample {
 }
 
 export class AdaptiveWindowController {
-  private windowBytes = START_WINDOW;
+  private windowBytes: number;
   private lastRate = 0;
   private lastSampleAt = 0;
   private settled = false;
+
+  /**
+   * `initialWindowBytes` seeds the starting point — pass the result of
+   * estimateInitialWindow(rttMs) when an RTT sample is available, or omit
+   * it to start cold at START_WINDOW as before.
+   */
+  constructor(initialWindowBytes: number = START_WINDOW) {
+    this.windowBytes = Math.min(
+      MAX_WINDOW,
+      Math.max(MIN_WINDOW, initialWindowBytes),
+    );
+  }
 
   getWindow(): number {
     return this.windowBytes;

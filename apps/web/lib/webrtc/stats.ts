@@ -32,6 +32,45 @@ function candidateTypeToConnectionType(
   return "direct";
 }
 
+/**
+ * One-shot RTT read, taken before a transfer starts so the adaptive window
+ * can be seeded from it instead of always starting cold (see adaptive.ts).
+ *
+ * Deliberately independent of StatsMonitor: that class polls on an interval
+ * and tracks throughput deltas across polls, which needs state to build up
+ * over time. This just needs a single current number, once, as early as
+ * possible after the data channel opens.
+ *
+ * Returns null if stats aren't available yet or no candidate pair has been
+ * selected — both are normal immediately after connection, and callers
+ * should treat null the same as "unknown" rather than retrying.
+ */
+export async function sampleRttMs(
+  getStats: () => Promise<RTCStatsReport>,
+): Promise<number | null> {
+  let report: RTCStatsReport;
+  try {
+    report = await getStats();
+  } catch {
+    return null;
+  }
+
+  let rttSec: number | null = null;
+
+  report.forEach((stat: any) => {
+    if (
+      stat.type === "candidate-pair" &&
+      (stat.selected || stat.nominated) &&
+      stat.state === "succeeded" &&
+      typeof stat.currentRoundTripTime === "number"
+    ) {
+      rttSec = stat.currentRoundTripTime;
+    }
+  });
+
+  return rttSec != null ? rttSec * 1000 : null;
+}
+
 export class StatsMonitor {
   private readonly getStats: () => Promise<RTCStatsReport>;
   private readonly onSample: (snapshot: StatsSnapshot) => void;

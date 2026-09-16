@@ -7183,7 +7183,15 @@ import { TransferProgress } from "@/components/transfer-progress";
 import { createRoom, checkRoom, SignalingClient, waitForMessage } from "@/lib/signaling/client";
 import { PeerConnection } from "@/lib/webrtc/peer";
 import { sendFiles, FileReceiver, downloadFile, type TransferProgress as Progress } from "@/lib/webrtc/transfer";
-import { StatsMonitor, type ConnectionType } from "@/lib/webrtc/stats";
+import { StatsMonitor, type ConnectionType, sampleRttMs } from "@/lib/webrtc/stats";
+import { estimateInitialWindow } from "@/lib/webrtc/adaptive";
+import {
+  supportsDirectorySink,
+  pickSaveDirectory,
+  directorySinkFactory,
+  memorySinkFactory,
+  type WritableDirectoryHandle,
+} from "@/lib/webrtc/sink";
 import {
   establishParallelSenderConnections,
   establishParallelReceiverConnections,
@@ -8500,7 +8508,7 @@ function SendPanel({
         });
       };
 
-      const runTransfer = (channels: RTCDataChannel[], primaryPeer: PeerConnection) => {
+      const runTransfer = async (channels: RTCDataChannel[], primaryPeer: PeerConnection) => {
         setPhase("sending");
         channelsRef.current = channels;
         if (timingRef.current.start === 0) {
@@ -8526,6 +8534,18 @@ function SendPanel({
           if (size == null) return min;
           return min == null ? size : Math.min(min, size);
         }, null);
+
+        // Seed the adaptive window from a real RTT sample instead of always
+        // starting cold at 512 KiB. getStats() right after the channel opens
+        // is normally a few milliseconds; the timeout is just a safety net
+        // so a slow or unsupported stats call can never delay the start of
+        // the transfer itself.
+        const rttMs = await Promise.race([
+          sampleRttMs(() => primaryPeer.getStats()),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 300)),
+        ]);
+        const initialWindowBytes = estimateInitialWindow(rttMs);
+
         void sendFiles(
           channels,
           checkpoint.remainingFiles,
@@ -8578,6 +8598,7 @@ function SendPanel({
           },
           maxMessageSize,
           abortControllerRef.current?.signal,
+          initialWindowBytes,
         );
       };
 
@@ -8643,13 +8664,13 @@ function SendPanel({
             setPhase("error");
             return;
           }
-          runTransfer(channels, peers[0]);
+          void runTransfer(channels, peers[0]);
         } else {
           const peer = new PeerConnection(
             "sender",
             signaling,
             {
-              onDataChannelOpen: (channel) => runTransfer([channel], peer),
+              onDataChannelOpen: (channel) => void runTransfer([channel], peer),
               onConnectionStateChange,
             },
             undefined,
@@ -9006,6 +9027,19 @@ function ReceivePanel({
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [receivedFile, setReceivedFile] = useState<File | null>(null);
+  // Off by default so nothing changes for anyone who doesn't opt in — same
+  // pattern as SendPanel's "Parallel connections" checkbox. When on, the
+  // very first thing startReceive() does is ask for a folder, so files are
+  // written straight to disk as they arrive instead of held in memory and
+  // handed to the browser's download manager at the end. Detected in an
+  // effect (not inline) so the server-rendered shell and the first client
+  // render agree before hydration; showDirectoryPicker only exists once the
+  // client render runs.
+  const [saveToDisk, setSaveToDisk] = useState(false);
+  const [diskSinkSupported, setDiskSinkSupported] = useState(false);
+  useEffect(() => {
+    setDiskSinkSupported(supportsDirectorySink());
+  }, []);
   const [connStats, setConnStats] = useState<{ type: ConnectionType; rttMs: number | null }>({
     type: "unknown",
     rttMs: null,
@@ -9085,9 +9119,18 @@ function ReceivePanel({
     const parsed = parseShareLink(input);
     if (parsed) {
       await startStoreReceive(parsed.id, parsed.masterKey);
-    } else {
-      await startLiveReceive(input);
+      return;
     }
+
+    // Ask for a destination now, as the first thing this handler does,
+    // while the click that triggered it still counts as active user
+    // activation — showDirectoryPicker() throws if called after too many
+    // awaits have passed. A cancelled or failed picker falls back to the
+    // in-memory path transparently, same as every other opt-in feature
+    // here degrading rather than blocking the transfer.
+    const saveDir = saveToDisk ? await pickSaveDirectory() : null;
+
+    await startLiveReceive(input, saveDir);
   };
 
   const startStoreReceive = async (id: string, masterKey: Uint8Array) => {
@@ -9133,7 +9176,10 @@ function ReceivePanel({
     }
   };
 
-  const startLiveReceive = async (code: string) => {
+  const startLiveReceive = async (
+    code: string,
+    saveDir: WritableDirectoryHandle | null = null,
+  ) => {
     setError(null);
     setPhase("connecting");
     reconnectAttemptRef.current = 0;
@@ -9165,7 +9211,8 @@ function ReceivePanel({
         void attemptReconnect();
       });
 
-      receiverRef.current = new FileReceiver({
+      receiverRef.current = new FileReceiver(
+        {
         onProgress: (p) => {
           if (terminalRef.current) return;
           lastActivityRef.current = Date.now();
@@ -9213,7 +9260,11 @@ function ReceivePanel({
           setError(msg);
           setPhase("error");
         },
-      });
+        },
+        1,
+        0,
+        saveDir ? directorySinkFactory(saveDir) : memorySinkFactory,
+      );
 
       const establishAndListen = async () => {
         // Fall back to ONE connection, not MAX_PARALLEL_CONNECTIONS.
@@ -9380,6 +9431,19 @@ return (
           </p>
         </div>
       </div>
+
+      {diskSinkSupported && (
+        <label className="mb-4 flex items-center gap-2 text-[11px] text-muted">
+          <input
+            type="checkbox"
+            checked={saveToDisk}
+            disabled={anyLocked}
+            onChange={(e) => setSaveToDisk(e.target.checked)}
+            className="h-3.5 w-3.5 accent-ink"
+          />
+          Save directly to a folder — skips holding the file in memory
+        </label>
+      )}
 
       {/* Code Input Field */}
       <div className="mb-2">
