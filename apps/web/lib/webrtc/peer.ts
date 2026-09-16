@@ -27,6 +27,18 @@ export class PeerConnection {
   private readonly connectionIndex: number;
   private pendingRemoteCandidates: RTCIceCandidateInit[] = [];
   private remoteDescriptionSet = false;
+  /**
+   * Unsubscribe handle for this connection's signaling listener.
+   *
+   * This used to be discarded, which meant close() left the listener
+   * registered. After a reconnect the dead PeerConnection for a given
+   * connectionIndex still received the *new* OFFER/ANSWER/ICE_CANDIDATE
+   * messages for that index and called setRemoteDescription() on a closed
+   * RTCPeerConnection — an unhandled rejection every time, plus one extra
+   * leaked listener per reconnect attempt.
+   */
+  private unsubscribeSignaling: (() => void) | null = null;
+  private closed = false;
 
   constructor(
     role: PeerRole,
@@ -42,7 +54,16 @@ export class PeerConnection {
     // RTCIceServer and our environment-agnostic IceServerConfig have the
     // same shape; this cast is safe (see protocol/src/index.ts for why the
     // shared type is declared locally instead of importing the DOM lib type).
-    this.pc = new RTCPeerConnection({ iceServers: iceServers as RTCIceServer[] });
+    this.pc = new RTCPeerConnection({
+      iceServers: iceServers as RTCIceServer[],
+      /**
+       * Start gathering candidates as soon as the connection exists rather
+       * than waiting for createOffer(). Time-to-first-byte is dominated by
+       * the handshake on small transfers, and this overlaps ICE gathering
+       * with the signaling round trip instead of serialising them.
+       */
+      iceCandidatePoolSize: 4,
+    });
 
     this.pc.addEventListener("icecandidate", (event) => {
       if (event.candidate) {
@@ -71,16 +92,32 @@ export class PeerConnection {
       });
     }
 
-    this.signaling.onMessage((msg) => {
+    this.unsubscribeSignaling = this.signaling.onMessage((msg) => {
+      // A closed connection must ignore everything. Without this a
+      // reconnect's messages get handed to the peer it replaced.
+      if (this.closed) return;
       if ((msg.connectionIndex ?? 0) !== this.connectionIndex) return; // not for this connection
+
+      // Every branch below is async and was previously fired with `void`,
+      // so any rejection — very much including setRemoteDescription() on a
+      // connection that has since been closed — surfaced as an unhandled
+      // promise rejection rather than being handled here.
+      const swallow = () => {
+        /* signaling races are expected; nothing actionable */
+      };
+
       if (msg.type === "OFFER" && role === "receiver") {
-        void this.handleOffer(msg.payload as { sdp: RTCSessionDescriptionInit });
+        this.handleOffer(
+          msg.payload as { sdp: RTCSessionDescriptionInit },
+        ).catch(swallow);
       } else if (msg.type === "ANSWER" && role === "sender") {
-        void this.handleAnswer(msg.payload as { sdp: RTCSessionDescriptionInit });
+        this.handleAnswer(
+          msg.payload as { sdp: RTCSessionDescriptionInit },
+        ).catch(swallow);
       } else if (msg.type === "ICE_CANDIDATE") {
-        void this.handleRemoteCandidate(
+        this.handleRemoteCandidate(
           (msg.payload as { candidate: RTCIceCandidateInit }).candidate,
-        );
+        ).catch(swallow);
       }
     });
   }
@@ -88,9 +125,24 @@ export class PeerConnection {
   /** Sender side: create the data channel + offer, send it through signaling. */
   async initiate(): Promise<void> {
     if (this.role !== "sender") throw new Error("only the sender initiates");
-    const channel = this.pc.createDataChannel(`${DATA_CHANNEL_LABEL}-${this.connectionIndex}`, {
-      ordered: true,
-    });
+    const channel = this.pc.createDataChannel(
+      `${DATA_CHANNEL_LABEL}-${this.connectionIndex}`,
+      {
+        /**
+         * Unordered, but still reliable.
+         *
+         * `maxRetransmits`/`maxPacketLifeTime` are deliberately left unset,
+         * so SCTP still guarantees delivery — it just stops holding
+         * already-arrived data back while it waits for an earlier packet to
+         * be retransmitted. The receiver reassembles by the 4-byte chunk
+         * index in every frame and has always been designed for
+         * out-of-order arrival, so the ordering guarantee was being paid for
+         * and then ignored. Dropping it removes head-of-line blocking on
+         * any link with loss.
+         */
+        ordered: false,
+      },
+    );
     this.dataChannel = channel;
     this.wireDataChannel(channel);
 
@@ -178,6 +230,10 @@ export class PeerConnection {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.unsubscribeSignaling?.();
+    this.unsubscribeSignaling = null;
     this.dataChannel?.close();
     this.pc.close();
   }

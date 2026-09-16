@@ -7697,9 +7697,18 @@ export default function HomePage() {
       <path d="M 3 1.5 C 2.8 6, 3.2 12, 3 16.5" stroke="#575656" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
 
-    {/* Open Book (Tutorials) Icon */}
+    {/*
+      Open Book (Tutorials) Icon.
+
+      href was "/blog", but app/ contains only page.tsx and s/ — there is
+      no blog route, so this was a 404 for every visitor. Pointing it at
+      the repo until the route exists; swap it back to "/blog" the moment
+      app/blog/page.tsx lands.
+    */}
     <a
-      href="/blog"
+      href="https://github.com/kimo-app/fast-transfer"
+      target="_blank"
+      rel="noreferrer"
       className="transition-opacity hover:opacity-70"
       aria-label="Blog / Info"
     >
@@ -8364,6 +8373,16 @@ function SendPanel({
   const terminalRef = useRef(false); // set once done/error/cancelled, so a late connection-state event or in-flight callback doesn't trigger a pointless reconnect or overwrite the UI after the user already left
   const abortControllerRef = useRef<AbortController | null>(null); // lets us stop an in-flight sendFiles() promptly on cancel instead of it hanging or resolving late
   const phaseRef = useRef<SendPhase>("idle"); // mirrors `phase` for use inside stable callbacks (e.g. the signaling close handler) that shouldn't go stale
+  // Guards against establishing a second set of peer connections. The room
+  // re-sends PEER_JOINED whenever the receiver's socket reappears — which
+  // its own reconnect logic makes it do — and without this guard each one
+  // built a whole new set of peers, overwrote peersRef without closing the
+  // old set, and left the abandoned connections sending.
+  const establishingRef = useRef(false);
+  // Which file indexes have already been accounted for in the resume
+  // checkpoint, so a double report can't shift the remaining-files list
+  // twice and walk off the end of it.
+  const completedFilesRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -8377,6 +8396,14 @@ function SendPanel({
     peersRef.current = [];
     channelsRef.current = [];
     signalingRef.current = null;
+    establishingRef.current = false;
+    // Reset the benchmark clock. runTransfer only starts it when `start` is
+    // 0, so that a reconnect keeps measuring the original transfer — but
+    // nothing ever put it back to 0. Every transfer after the first was
+    // therefore timed from the first one's start and reported a fraction of
+    // its real throughput.
+    timingRef.current = { start: 0, end: 0, peakBps: 0 };
+    completedFilesRef.current = new Set();
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -8387,6 +8414,9 @@ function SendPanel({
     setPhase("waiting");
     reconnectAttemptRef.current = 0;
     terminalRef.current = false;
+    establishingRef.current = false;
+    completedFilesRef.current = new Set();
+    timingRef.current = { start: 0, end: 0, peakBps: 0 };
     abortControllerRef.current = new AbortController();
     const totalBytes = files.reduce((s, f) => s + f.size, 0);
     resumeRef.current = {
@@ -8407,10 +8437,48 @@ function SendPanel({
       signalingRef.current = signaling;
       await signaling.connect();
 
+      /**
+       * Start (or restart) the WebRTC side, at most once per pairing.
+       *
+       * Two jobs:
+       *   - only establish from a state where establishing makes sense. A
+       *     repeat PEER_JOINED while already connecting or sending is a
+       *     duplicate socket, not a new pairing.
+       *   - catch failures. establishAndRun() was previously called with
+       *     `void`, so a rejection from establishParallelSenderConnections
+       *     became an unhandled rejection and left the panel sitting on
+       *     "connecting" with nothing shown.
+       */
+      const runEstablish = () => {
+        if (terminalRef.current) return;
+        if (establishingRef.current) return;
+        if (
+          phaseRef.current !== "waiting" &&
+          phaseRef.current !== "reconnecting"
+        ) {
+          return;
+        }
+        establishingRef.current = true;
+        establishAndRun()
+          .catch((err: unknown) => {
+            if (terminalRef.current) return;
+            terminalRef.current = true;
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Could not establish a connection to the receiver.",
+            );
+            setPhase("error");
+          })
+          .finally(() => {
+            establishingRef.current = false;
+          });
+      };
+
       const attachTopLevelHandlers = (client: SignalingClient) => {
         client.onMessage((msg) => {
           if (msg.type === "PEER_JOINED") {
-            void establishAndRun();
+            runEstablish();
           }
           if (msg.type === "PEER_LEFT") {
             terminalRef.current = true;
@@ -8467,10 +8535,21 @@ function SendPanel({
               setProgress(p);
               timingRef.current.peakBps = Math.max(timingRef.current.peakBps, p.ratePerSec);
             },
-            onFileFullySent: () => {
+            onFileFullySent: (fileIndex) => {
               // Drop the file that just finished — whatever's left is what
               // a reconnect would need to send.
-              checkpoint.bytesAlreadySent += checkpoint.remainingFiles[0].size;
+              //
+              // Both guards matter. Reading remainingFiles[0].size with no
+              // emptiness check threw a TypeError that escaped into an event
+              // handler, leaving the panel stuck with nothing displayed; and
+              // the same index arriving twice (two send loops briefly
+              // overlapping across a reconnect) would shift the list twice
+              // and eventually walk off the end of it.
+              if (completedFilesRef.current.has(fileIndex)) return;
+              completedFilesRef.current.add(fileIndex);
+              const justSent = checkpoint.remainingFiles[0];
+              if (!justSent) return;
+              checkpoint.bytesAlreadySent += justSent.size;
               checkpoint.remainingFiles = checkpoint.remainingFiles.slice(1);
             },
             onAllComplete: () => {
@@ -8504,6 +8583,14 @@ function SendPanel({
 
       const establishAndRun = async () => {
         setPhase("connecting");
+
+        // Never leave a previous attempt's connections open — they keep
+        // their signaling listeners and, in the reconnect case, keep
+        // sending over channels this transfer no longer knows about.
+        if (peersRef.current.length > 0) {
+          peersRef.current.forEach((p) => p.close());
+          peersRef.current = [];
+        }
 
         // Tell the receiver exactly how many RTCPeerConnections to expect,
         // so it doesn't have to eagerly open MAX_PARALLEL_CONNECTIONS and
@@ -8569,7 +8656,7 @@ function SendPanel({
             getIceServers(turnOverride),
           );
           peersRef.current = [peer];
-          void peer.initiate();
+          await peer.initiate();
         }
       };
 
@@ -8584,8 +8671,21 @@ function SendPanel({
         reconnectAttemptRef.current++;
         setPhase("reconnecting");
         statsRef.current?.stop();
+
+        // Stop the transfer that's dying before starting its replacement.
+        //
+        // This was why resume looked broken. Closing the peer connections
+        // did nothing to the in-flight sendFiles() promise — only cancel()
+        // ever aborted it — so the old loop kept writing to closed
+        // channels, threw, and reported onError. terminalRef is false
+        // during a reconnect, so that stale error set phase "error" and
+        // wiped out the reconnect that was working perfectly well.
+        abortControllerRef.current?.abort();
+        abortControllerRef.current = new AbortController();
+
         peersRef.current.forEach((p) => p.close());
         peersRef.current = [];
+        establishingRef.current = false;
         await new Promise((r) => setTimeout(r, delay));
 
         // Full signaling-reconnect: if the WebSocket itself also dropped
@@ -8621,7 +8721,7 @@ function SendPanel({
           return;
         }
 
-        void establishAndRun();
+        runEstablish();
       };
 
       attachTopLevelHandlers(signaling);
@@ -8932,6 +9032,11 @@ function ReceivePanel({
   const terminalRef = useRef(false);
   const lastActivityRef = useRef(Date.now());
   const phaseRef = useRef<ReceivePhase>("idle"); // mirrors `phase` for use inside stable callbacks (e.g. the signaling close handler) that shouldn't go stale
+  // Same purpose as SendPanel's: the room can announce the sender more than
+  // once, and establishAndListen is also called directly at the end of
+  // startLiveReceive, so without a guard two sets of peer connections can
+  // be stood up for one pairing.
+  const establishingRef = useRef(false);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -8944,6 +9049,16 @@ function ReceivePanel({
     statsRef.current = null;
     peersRef.current = [];
     signalingRef.current = null;
+    establishingRef.current = false;
+    // The FileReceiver was previously left in place, so an abandoned
+    // transfer kept its reorder buffer, its worker hash stream and any
+    // half-written destination alive, and carried on handling messages
+    // from whichever channel was still open.
+    receiverRef.current?.dispose();
+    receiverRef.current = null;
+    // See SendPanel: without this reset every transfer after the first is
+    // timed from the first one's start.
+    timingRef.current = { start: 0, end: 0, peakBps: 0 };
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -9023,6 +9138,9 @@ function ReceivePanel({
     setPhase("connecting");
     reconnectAttemptRef.current = 0;
     terminalRef.current = false;
+    establishingRef.current = false;
+    timingRef.current = { start: 0, end: 0, peakBps: 0 };
+    setReceivedFile(null);
 
     try {
       const status = await checkRoom(code);
@@ -9065,8 +9183,19 @@ function ReceivePanel({
           setPhase("verifying");
         },
         onFileComplete: (file) => {
+          // This was the one receiver callback without a terminal check.
+          // finishCurrentFile is async, so on a large file there's a real
+          // window in which the user can hit cancel and still end up with
+          // the file in their downloads folder.
+          if (terminalRef.current) return;
           setReceivedFile(file);
-          downloadFile(file);
+          void downloadFile(file);
+        },
+        onFileSaved: () => {
+          // The bytes went straight to a destination the person chose, so
+          // there is nothing to hand to the download manager.
+          if (terminalRef.current) return;
+          setReceivedFile(null);
         },
         onAllComplete: () => {
           if (terminalRef.current) return;
@@ -9087,7 +9216,16 @@ function ReceivePanel({
       });
 
       const establishAndListen = async () => {
-        const connectionCount = await waitForConfig(signaling, MAX_PARALLEL_CONNECTIONS, 3000);
+        // Fall back to ONE connection, not MAX_PARALLEL_CONNECTIONS.
+        //
+        // The sender picks its count from the batch size and is usually on
+        // a single connection. Assuming four meant the receiver stood up
+        // four RTCPeerConnections, three of which nothing ever answered —
+        // and since establishParallelReceiverConnections waits for all of
+        // them, establishAndListen didn't return until their 15-second
+        // timeouts expired. Guessing low costs nothing: the sender only
+        // ever offers on the indexes it actually opened.
+        const connectionCount = await waitForConfig(signaling, 1, 3000);
 
         const onConnectionStateChange = (state: RTCPeerConnectionState) => {
           if (state !== "failed" && state !== "disconnected") return;
@@ -9147,6 +9285,7 @@ function ReceivePanel({
         statsRef.current?.stop();
         peersRef.current.forEach((p) => p.close());
         peersRef.current = [];
+        establishingRef.current = false;
         await new Promise((r) => setTimeout(r, delay));
 
         if (!signaling.isConnected()) {
@@ -9167,10 +9306,37 @@ function ReceivePanel({
             void attemptReconnect();
           });
         }
-        void establishAndListen();
+        runListen();
       };
 
-      await establishAndListen();
+      /**
+       * Guarded, caught wrapper around establishAndListen — same reasoning
+       * as the sender's runEstablish(). establishAndListen() awaits
+       * waitForConfig and a set of ICE handshakes, so a rejection here used
+       * to become an unhandled rejection with the panel left on
+       * "connecting".
+       */
+      function runListen() {
+        if (terminalRef.current) return;
+        if (establishingRef.current) return;
+        establishingRef.current = true;
+        establishAndListen()
+          .catch((err: unknown) => {
+            if (terminalRef.current) return;
+            terminalRef.current = true;
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Could not connect to the sender.",
+            );
+            setPhase("error");
+          })
+          .finally(() => {
+            establishingRef.current = false;
+          });
+      }
+
+      runListen();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to join transfer");
       setPhase("error");
@@ -9183,9 +9349,12 @@ function ReceivePanel({
     // handleMessage/finishCurrentFile call sees it and no-ops.
     terminalRef.current = true;
     receiverRef.current?.notifyCancel("The receiver cancelled the transfer.");
+    // cleanup() disposes the receiver; clearing receivedFile here stops a
+    // previous transfer's result lingering on the idle screen.
     cleanup();
     setPhase("idle");
     setProgress(null);
+    setReceivedFile(null);
     setCodeInput("");
   };
 

@@ -7,6 +7,13 @@ interface TransferProgressProps {
   fileName: string;
   bytesTransferred: number;
   totalBytes: number;
+  /**
+   * 0-100. Callers compute this as bytes/total, which is NaN when total is
+   * 0 — reachable with an empty file, or before BATCH_INFO arrives and the
+   * receiver still has totalBytes at 0. NaN then went straight into a CSS
+   * width and toFixed(), so it's clamped here rather than at each call
+   * site.
+   */
   percent: number;
   ratePerSec: number;
   etaSeconds: number;
@@ -27,6 +34,10 @@ export function TransferProgress({
   totalFiles,
   windowBytes,
 }: TransferProgressProps) {
+  const safePercent = Number.isFinite(percent)
+    ? Math.min(100, Math.max(0, percent))
+    : 0;
+
   return (
     <div className="space-y-2 text-[#181818]">
       {/* File Label & Size Counter */}
@@ -46,7 +57,7 @@ export function TransferProgress({
       >
         <div
           className="h-full bg-[#181818] transition-all duration-200 ease-out"
-          style={{ width: `${Math.min(100, percent)}%` }}
+          style={{ width: `${safePercent}%` }}
         />
       </div>
 
@@ -55,7 +66,7 @@ export function TransferProgress({
         <span className="min-w-0 flex-1 truncate">
           {fileIndex + 1}/{totalFiles} {truncateName(fileName, 36)}
         </span>
-        <span className="shrink-0 font-semibold text-[#101010]">{percent.toFixed(0)}%</span>
+        <span className="shrink-0 font-semibold text-[#101010]">{safePercent.toFixed(0)}%</span>
       </div>
 
       {/* Stat Boxes Grid (Rate, ETA, Window) */}
