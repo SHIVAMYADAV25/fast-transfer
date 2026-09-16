@@ -8,7 +8,9 @@
     "build:desktop": "cross-env BUILD_TARGET=desktop next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "tsx transfer-e2e-test.mts"
+    "test:e2e": "tsx transfer-e2e-test.mts",
+    "test:engine": "tsx transfer-engine-test.mts",
+    "test": "tsx transfer-e2e-test.mts && tsx transfer-engine-test.mts"
   },
   "dependencies": {
     "@fast-transfer/protocol": "workspace:*",
@@ -17,17 +19,17 @@
     "@tauri-apps/plugin-dialog": "^2.0.1",
     "@tauri-apps/plugin-fs": "^2.0.1",
     "next": "^15.0.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "qrcode": "^1.5.4"
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3",
-    "@types/node": "^20.14.0",
+    "@types/node": "^20.19.43",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "@types/qrcode": "^1.5.5",
     "autoprefixer": "^10.4.20",
+    "cross-env": "^7.0.3",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "tsx": "^4.19.0",

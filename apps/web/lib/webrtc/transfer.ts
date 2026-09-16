@@ -3,7 +3,13 @@
 
 import type { FileMetadata } from "@fast-transfer/protocol";
 import { AdaptiveWindowController } from "./adaptive";
-import { createHasher } from "./hash";
+import {
+  createHasher,
+  createStreamingHasher,
+  hashFileInBackground,
+  type StreamingHasher,
+} from "./hash";
+import { memorySinkFactory, type FileSink, type SinkFactory } from "./sink";
 import { toFriendlyError } from "./errors";
 
 /**
@@ -11,7 +17,8 @@ import { toFriendlyError } from "./errors";
  *
  * The browser's RTCDataChannel is structurally compatible with this type,
  * while tests can use a lightweight mock without having to implement all
- * browser-only RTCDataChannel properties.
+ * browser-only RTCDataChannel properties. It's also the seam a non-WebRTC
+ * transport (a raw socket on LAN, a WebTransport stream) slots into.
  */
 export interface TransferDataChannel {
   bufferedAmount: number;
@@ -19,10 +26,7 @@ export interface TransferDataChannel {
 
   send(data: string | ArrayBuffer): void;
 
-  addEventListener(
-    type: string,
-    callback: (event: MessageEvent) => void,
-  ): void;
+  addEventListener(type: string, callback: (event: MessageEvent) => void): void;
 
   removeEventListener(
     type: string,
@@ -60,6 +64,36 @@ const MIN_CHUNK_SIZE = 16 * 1024;
 const DEFAULT_MAX_MESSAGE_SIZE_FALLBACK = 64 * 1024;
 
 /**
+ * How many chunk reads the producer keeps in flight.
+ *
+ * The old producer was strictly serial — read, hash, enqueue, then start the
+ * next read — so a chunk's disk read never overlapped anything. Keeping a
+ * few reads outstanding means the storage layer always has work queued while
+ * the previous chunk is being framed and handed to a channel.
+ */
+const READ_AHEAD_CHUNKS = 4;
+
+/**
+ * Upper bound on chunks sitting in the send queue, per channel.
+ *
+ * This is what stops the producer reading an entire multi-gigabyte file into
+ * memory: the old queue was unbounded and the producer never blocked, so
+ * sender memory grew with file size rather than staying flat.
+ */
+const QUEUE_DEPTH_PER_CHANNEL = 8;
+
+/**
+ * How often progress callbacks are allowed to fire.
+ *
+ * Progress used to be emitted once per chunk. At 125 MB/s with 256 KiB
+ * chunks that's roughly 500 React state updates a second, on the same thread
+ * that has to keep the data channel fed. Nobody can read a number changing
+ * 500 times a second, so coalesce to something humane and give the main
+ * thread the time back.
+ */
+const PROGRESS_INTERVAL_MS = 100;
+
+/**
  * Convert the negotiated SCTP maximum message size into a safe payload size.
  *
  * The returned value is the payload size only. The 4-byte framing header is
@@ -84,8 +118,7 @@ export function resolveChunkSize(
   /**
    * Try to leave safety margin.
    */
-  const usable =
-    maxMessageSize - FRAME_HEADER_BYTES - SAFETY_MARGIN_BYTES;
+  const usable = maxMessageSize - FRAME_HEADER_BYTES - SAFETY_MARGIN_BYTES;
 
   if (usable > 0) {
     const preferred = Math.max(
@@ -145,6 +178,13 @@ type ControlMessage =
       type: "RESUME_STATUS";
       fileId: string;
       receivedIndexes: number[];
+      /**
+       * Every chunk below this index has been received. See
+       * replyResumeStatus() — a literal list of every received index can
+       * exceed the channel's own max message size on a large file, which
+       * would break the very resume it exists to enable.
+       */
+      contiguousUpTo?: number;
     }
   | {
       type: "CANCEL";
@@ -233,6 +273,9 @@ function parseControlMessage(data: string): ControlMessage | null {
           type: "RESUME_STATUS",
           fileId: value.fileId,
           receivedIndexes: value.receivedIndexes,
+          ...(isFiniteNumber(value.contiguousUpTo) && value.contiguousUpTo >= 0
+            ? { contiguousUpTo: Math.floor(value.contiguousUpTo) }
+            : {}),
         };
       }
       return null;
@@ -240,9 +283,7 @@ function parseControlMessage(data: string): ControlMessage | null {
     case "CANCEL":
       return {
         type: "CANCEL",
-        ...(typeof value.reason === "string"
-          ? { reason: value.reason }
-          : {}),
+        ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
       };
 
     case "TRANSFER_COMPLETE":
@@ -251,9 +292,7 @@ function parseControlMessage(data: string): ControlMessage | null {
       return {
         type: "TRANSFER_COMPLETE",
         fileId: value.fileId,
-        ...(typeof value.sha256 === "string"
-          ? { sha256: value.sha256 }
-          : {}),
+        ...(typeof value.sha256 === "string" ? { sha256: value.sha256 } : {}),
       };
 
     default:
@@ -264,16 +303,26 @@ function parseControlMessage(data: string): ControlMessage | null {
 export interface TransferCallbacks {
   onMetadata?: (meta: FileMetadata) => void;
   onProgress?: (progress: TransferProgress) => void;
+  /**
+   * Fired when a received file was held in memory and is ready to be handed
+   * to the browser's download machinery.
+   */
   onFileComplete?: (file: File) => void;
+  /**
+   * Fired instead of onFileComplete when the bytes were streamed straight to
+   * a destination the person chose — there is no File to download because
+   * it is already saved.
+   */
+  onFileSaved?: (fileName: string) => void;
   onFileFullySent?: (fileIndex: number) => void;
   onAllComplete?: () => void;
   onError?: (message: string) => void;
   /**
-   * Fired on the receiver right after 100% of a file's bytes have arrived,
-   * before hash verification (which can take a real, visible amount of time
-   * on large files — reassembling + SHA-256'ing a multi-GB blob is not
-   * instant). Without this the UI has nothing to show between "100%
-   * received" and the download actually starting, which reads as frozen.
+   * Fired on the receiver once 100% of a file's bytes have arrived and the
+   * final integrity check runs. With prefix hashing this is now close to
+   * instantaneous — the hash finishes as the last chunk lands — but the
+   * callback is kept so the UI has a state to show while the last write
+   * flushes.
    */
   onVerifying?: (fileName: string) => void;
 }
@@ -292,13 +341,11 @@ const SEND_RETRY_DELAYS_MS = [20, 50, 120, 250, 500, 1000, 1500, 2000];
 
 /**
  * send() that survives the browser's "RTCDataChannel send queue is full"
- * error. That error is thrown synchronously by the browser when its
- * internal SCTP send queue — a separate, lower-level limit than the
- * `bufferedAmount` this module already backs off against — is momentarily
- * saturated. It's transient backpressure, not a broken connection, so the
- * right response is a short wait and a retry, not failing the whole
- * transfer (which is what was happening before, and exactly why users saw
- * this raw browser error surface as a fatal one).
+ * error. That error is thrown synchronously by the browser when its internal
+ * SCTP send queue — a separate, lower-level limit than the `bufferedAmount`
+ * this module already backs off against — is momentarily saturated. It's
+ * transient backpressure, not a broken connection, so the right response is
+ * a short wait and a retry, not failing the whole transfer.
  */
 async function safeSend(
   channel: TransferDataChannel,
@@ -338,9 +385,7 @@ function frameChunk(index: number, bytes: Uint8Array): ArrayBuffer {
   return buf;
 }
 
-function unframeChunk(
-  buf: ArrayBuffer,
-): { index: number; bytes: Uint8Array } {
+function unframeChunk(buf: ArrayBuffer): { index: number; bytes: Uint8Array } {
   if (buf.byteLength < FRAME_HEADER_BYTES) {
     throw new Error("Invalid chunk frame: message is too small.");
   }
@@ -353,106 +398,198 @@ function unframeChunk(
 
 /**
  * Rolling-window transfer rate calculator.
+ *
+ * The previous implementation pushed a sample per chunk and used
+ * Array.shift() to expire old ones — an O(n) operation run hundreds of times
+ * a second over a list of a thousand-plus entries. This keeps a fixed-size
+ * ring of coarser samples instead: same number, none of the cost.
  */
 class RateMeter {
-  private samples: { t: number; bytes: number }[] = [];
+  private readonly times: Float64Array;
+  private readonly totals: Float64Array;
+  private readonly capacity: number;
+  private head = 0;
+  private count = 0;
+  private lastRecordedAt = 0;
+  private lastRate = 0;
 
-  private readonly windowMs: number;
-
-  constructor(windowMs = 3000) {
-    this.windowMs = windowMs;
+  constructor(
+    private readonly windowMs = 3000,
+    private readonly sampleEveryMs = 50,
+  ) {
+    this.capacity = Math.ceil(windowMs / sampleEveryMs) + 2;
+    this.times = new Float64Array(this.capacity);
+    this.totals = new Float64Array(this.capacity);
   }
 
   record(totalBytes: number): number {
     const now = performance.now();
 
-    this.samples.push({
-      t: now,
-      bytes: totalBytes,
-    });
-
-    while (
-      this.samples.length > 1 &&
-      now - this.samples[0].t > this.windowMs
-    ) {
-      this.samples.shift();
+    if (this.count > 0 && now - this.lastRecordedAt < this.sampleEveryMs) {
+      return this.lastRate;
     }
 
-    const first = this.samples[0];
+    this.lastRecordedAt = now;
+    this.times[this.head] = now;
+    this.totals[this.head] = totalBytes;
+    this.head = (this.head + 1) % this.capacity;
+    if (this.count < this.capacity) this.count++;
 
-    const elapsedSec = (now - first.t) / 1000;
-
-    if (elapsedSec <= 0) {
-      return 0;
+    // Walk forward from the oldest retained sample, dropping anything that
+    // has fallen out of the window. Bounded by `capacity` (~62).
+    let oldest = (this.head - this.count + this.capacity) % this.capacity;
+    while (this.count > 1 && now - this.times[oldest] > this.windowMs) {
+      this.count--;
+      oldest = (oldest + 1) % this.capacity;
     }
 
-    return (totalBytes - first.bytes) / elapsedSec;
+    const elapsedSec = (now - this.times[oldest]) / 1000;
+    if (elapsedSec <= 0) return this.lastRate;
+
+    this.lastRate = (totalBytes - this.totals[oldest]) / elapsedSec;
+    return this.lastRate;
   }
 }
 
 /**
- * Small single-producer / single-consumer async queue.
+ * Throttles progress callbacks to something a human can read, while
+ * guaranteeing the final value is always delivered.
  */
-class AsyncQueue<T> {
-  private items: T[] = [];
+class ProgressEmitter {
+  private pending: TransferProgress | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private lastEmitAt = 0;
 
-  private waiting: ((result: IteratorResult<T>) => void)[] = [];
+  constructor(private readonly sink?: (progress: TransferProgress) => void) {}
 
-  private closed = false;
+  push(progress: TransferProgress): void {
+    if (!this.sink) return;
 
-  push(item: T): void {
-    if (this.closed) {
+    this.pending = progress;
+
+    const now = performance.now();
+    const elapsed = now - this.lastEmitAt;
+
+    if (elapsed >= PROGRESS_INTERVAL_MS) {
+      this.flush();
       return;
     }
 
-    const resolve = this.waiting.shift();
-
-    if (resolve) {
-      resolve({
-        value: item,
-        done: false,
-      });
-    } else {
-      this.items.push(item);
+    if (!this.timer) {
+      this.timer = setTimeout(
+        () => this.flush(),
+        PROGRESS_INTERVAL_MS - elapsed,
+      );
     }
+  }
+
+  flush(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    const progress = this.pending;
+    this.pending = null;
+    if (!progress || !this.sink) return;
+    this.lastEmitAt = performance.now();
+    this.sink(progress);
+  }
+
+  dispose(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.pending = null;
+  }
+}
+
+interface SendFrame {
+  index: number;
+  data: ArrayBuffer;
+  payloadBytes: number;
+}
+
+/**
+ * Bounded queue shared by every channel.
+ *
+ * Chunks used to be assigned to a channel at production time, round-robin.
+ * That meant a slow connection still got exactly its 1/N share of the file
+ * and the whole transfer finished when the slowest one did. With one shared
+ * queue, consumers pull as they free up: a fast connection naturally takes
+ * more chunks and a struggling one takes fewer, with no explicit scheduling.
+ *
+ * The bound is the other half of the job — it's what makes the producer
+ * block instead of reading the entire file into memory.
+ */
+class ChunkQueue {
+  private items: SendFrame[] = [];
+  private head = 0;
+  private consumers: ((frame: SendFrame | null) => void)[] = [];
+  private producers: (() => void)[] = [];
+  private closed = false;
+
+  constructor(private readonly capacity: number) {}
+
+  private get size(): number {
+    return this.items.length - this.head;
+  }
+
+  /** Resolves once the frame has been handed off, or there was room for it. */
+  async push(frame: SendFrame): Promise<void> {
+    while (this.size >= this.capacity && !this.closed) {
+      await new Promise<void>((resolve) => this.producers.push(resolve));
+    }
+
+    if (this.closed) return;
+
+    const waiting = this.consumers.shift();
+    if (waiting) {
+      waiting(frame);
+      return;
+    }
+
+    this.items.push(frame);
+  }
+
+  pull(): Promise<SendFrame | null> {
+    if (this.size > 0) {
+      const frame = this.items[this.head++];
+
+      // Compact occasionally so the backing array doesn't grow without bound.
+      if (this.head > 32 && this.head * 2 >= this.items.length) {
+        this.items = this.items.slice(this.head);
+        this.head = 0;
+      }
+
+      this.producers.shift()?.();
+      return Promise.resolve(frame);
+    }
+
+    if (this.closed) return Promise.resolve(null);
+
+    return new Promise((resolve) => this.consumers.push(resolve));
   }
 
   close(): void {
+    if (this.closed) return;
     this.closed = true;
-
-    while (this.waiting.length > 0) {
-      this.waiting.shift()!({
-        value: undefined as unknown as T,
-        done: true,
-      });
-    }
+    while (this.consumers.length > 0) this.consumers.shift()!(null);
+    while (this.producers.length > 0) this.producers.shift()!();
   }
+}
 
-  private next(): Promise<IteratorResult<T>> {
-    if (this.items.length > 0) {
-      return Promise.resolve({
-        value: this.items.shift()!,
-        done: false,
-      });
-    }
-
-    if (this.closed) {
-      return Promise.resolve({
-        value: undefined as unknown as T,
-        done: true,
-      });
-    }
-
-    return new Promise((resolve) => {
-      this.waiting.push(resolve);
-    });
+/**
+ * Last-resort main-thread hash, used only when the worker becomes
+ * unavailable mid-flight. Reads in bounded slices so it never needs the
+ * whole file resident at once.
+ */
+async function hashFileOnMainThread(file: Blob): Promise<string> {
+  const hasher = createHasher();
+  const SLICE = 8 * 1024 * 1024;
+  for (let offset = 0; offset < file.size; offset += SLICE) {
+    const slice = file.slice(offset, Math.min(offset + SLICE, file.size));
+    hasher.update(new Uint8Array(await slice.arrayBuffer()));
   }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: () => this.next(),
-    };
-  }
+  return hasher.digestHex();
 }
 
 /**
@@ -475,15 +612,13 @@ export async function sendFiles(
   }
 
   const rate = new RateMeter();
+  const progress = new ProgressEmitter(callbacks.onProgress);
   const controlChannel = channels[0]!;
 
   /**
    * Cooperative cancellation. Two things can trigger it:
    *   - the caller aborting `signal` (local "Cancel send" click)
-   *   - a CANCEL control message arriving from the receiver (they clicked
-   *     "Cancel receive")
-   * Either way we stop promptly instead of continuing to blast chunks into
-   * a channel nobody's listening to anymore.
+   *   - a CANCEL control message arriving from the receiver
    */
   let cancelled = false;
   let cancelledByPeer = false;
@@ -515,26 +650,20 @@ export async function sendFiles(
     ? batchOverride.totalFiles - files.length
     : 0;
 
-  let bytesTransferredAllFiles =
-    batchOverride?.bytesAlreadySent ?? 0;
+  let bytesTransferredAllFiles = batchOverride?.bytesAlreadySent ?? 0;
 
   const totalBytesAllFiles =
     batchOverride?.totalBytes ??
     files.reduce((sum, file) => sum + file.size, 0);
 
-  const totalFilesReported =
-    batchOverride?.totalFiles ?? files.length;
+  const totalFilesReported = batchOverride?.totalFiles ?? files.length;
 
-  let onControlMessage:
-    | ((event: MessageEvent) => void)
-    | null = null;
+  let onControlMessage: ((event: MessageEvent) => void) | null = null;
 
   try {
     const CHUNK_SIZE = resolveChunkSize(maxMessageSize);
 
-    const windows = channels.map(
-      () => new AdaptiveWindowController(),
-    );
+    const windows = channels.map(() => new AdaptiveWindowController());
 
     /**
      * Tell receiver the true batch shape.
@@ -553,7 +682,7 @@ export async function sendFiles(
      */
     const pendingResumeReplies = new Map<
       string,
-      (indexes: number[]) => void
+      (status: { upTo: number; extra: number[] }) => void
     >();
 
     onControlMessage = (event: MessageEvent) => {
@@ -561,62 +690,59 @@ export async function sendFiles(
         return;
       }
 
-      try {
-        const msg = parseControlMessage(event.data);
+      const msg = parseControlMessage(event.data);
 
-        if (!msg) {
-          return;
+      // Anything unparseable is ignored rather than treated as fatal — a
+      // single odd frame must never destroy a healthy transfer.
+      if (!msg) {
+        return;
+      }
+
+      if (msg.type === "RESUME_STATUS") {
+        const resolver = pendingResumeReplies.get(msg.fileId);
+
+        if (resolver) {
+          resolver({
+            upTo: msg.contiguousUpTo ?? 0,
+            extra: msg.receivedIndexes,
+          });
+          pendingResumeReplies.delete(msg.fileId);
         }
+      }
 
-        if (msg.type === "RESUME_STATUS") {
-          const resolver = pendingResumeReplies.get(msg.fileId);
-
-          if (resolver) {
-            resolver(msg.receivedIndexes);
-            pendingResumeReplies.delete(msg.fileId);
-          }
-        }
-
-        if (msg.type === "CANCEL") {
-          triggerCancel(
-            msg.reason || "The receiver cancelled the transfer.",
-            true,
-          );
-        }
-      } catch {
-        // Ignore malformed control messages.
+      if (msg.type === "CANCEL") {
+        triggerCancel(
+          msg.reason || "The receiver cancelled the transfer.",
+          true,
+        );
       }
     };
 
-    controlChannel.addEventListener(
-      "message",
-      onControlMessage,
-    );
+    controlChannel.addEventListener("message", onControlMessage);
 
     const queryAlreadyReceived = (
       fileId: string,
-    ): Promise<number[]> => {
+    ): Promise<{ upTo: number; extra: number[] }> => {
       return new Promise((resolve) => {
+        const empty = { upTo: 0, extra: [] as number[] };
+
         const timeout = setTimeout(() => {
           pendingResumeReplies.delete(fileId);
-          resolve([]);
+          resolve(empty);
         }, 2500);
 
-        pendingResumeReplies.set(fileId, (indexes) => {
+        pendingResumeReplies.set(fileId, (status) => {
           clearTimeout(timeout);
-          resolve(indexes);
+          resolve(status);
         });
 
         safeSend(
           controlChannel,
-          JSON.stringify({
-            type: "RESUME_QUERY",
-            fileId,
-          }),
+          JSON.stringify({ type: "RESUME_QUERY", fileId }),
         ).catch(() => {
           clearTimeout(timeout);
           pendingResumeReplies.delete(fileId);
-          resolve([]);
+          resolve(empty);
         });
       });
     };
@@ -631,9 +757,7 @@ export async function sendFiles(
 
       const fileIndex = i + fileCountOffset;
 
-      const totalChunks = Math.ceil(
-        file.size / CHUNK_SIZE,
-      );
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
       const meta: FileMetadata = {
         fileId: `f${fileIndex}-${file.name}-${file.size}`,
@@ -645,14 +769,23 @@ export async function sendFiles(
       };
 
       /**
+       * Start hashing immediately, off the main thread.
+       *
+       * The worker reads the same File independently of the send loop, so
+       * hashing costs the send path nothing and finishes around the same
+       * time the last chunk is read. Only when no worker is available do we
+       * fall back to hashing inline in the producer, the way this used to
+       * work for everyone.
+       */
+      const backgroundHash = hashFileInBackground(file);
+      const inlineHasher = backgroundHash ? null : createHasher();
+
+      /**
        * FILE_METADATA is safe to resend.
        */
       await safeSend(
         controlChannel,
-        JSON.stringify({
-          type: "FILE_METADATA",
-          meta,
-        }),
+        JSON.stringify({ type: "FILE_METADATA", meta }),
       );
 
       callbacks.onMetadata?.(meta);
@@ -660,171 +793,176 @@ export async function sendFiles(
       /**
        * Ask receiver what it already has.
        */
-      const alreadyReceived = new Set(
-        await queryAlreadyReceived(meta.fileId),
-      );
+      const resumeStatus = await queryAlreadyReceived(meta.fileId);
+      const resumeUpTo = Math.min(resumeStatus.upTo, totalChunks);
+      const resumeExtra = new Set(resumeStatus.extra);
+      const alreadyHas = (index: number) =>
+        index < resumeUpTo || resumeExtra.has(index);
 
       /**
-       * Account for already-received chunks.
+       * Account for already-received chunks in the progress numbers.
        */
-      if (alreadyReceived.size > 0) {
+      if (resumeUpTo > 0 || resumeExtra.size > 0) {
         let skippedBytes = 0;
 
-        for (const idx of alreadyReceived) {
+        for (let idx = 0; idx < totalChunks; idx++) {
+          if (!alreadyHas(idx)) continue;
           const start = idx * CHUNK_SIZE;
-
-          if (start >= file.size) {
-            continue;
-          }
-
-          skippedBytes += Math.min(
-            CHUNK_SIZE,
-            file.size - start,
-          );
+          if (start >= file.size) continue;
+          skippedBytes += Math.min(CHUNK_SIZE, file.size - start);
         }
 
         bytesTransferredAllFiles += skippedBytes;
       }
 
-      /**
-       * SHA-256 has to process chunks in strict file order.
-       */
-      const hasher = createHasher();
+      const queue = new ChunkQueue(channels.length * QUEUE_DEPTH_PER_CHANNEL);
 
       /**
-       * One queue per channel.
+       * Which chunks the producer needs to touch at all.
+       *
+       * With worker hashing, resumed chunks don't need to be read — the
+       * worker hashes the file end to end regardless. Without it, every
+       * chunk must still be read in order so the inline hash covers the
+       * whole file.
        */
-      const queues = channels.map(
-        () =>
-          new AsyncQueue<{
-            index: number;
-            bytes: Uint8Array;
-          }>(),
-      );
+      const readEveryChunk = inlineHasher != null;
+
+      const readChunk = async (index: number): Promise<Uint8Array> => {
+        const start = index * CHUNK_SIZE;
+        const slice = file.slice(
+          start,
+          Math.min(start + CHUNK_SIZE, file.size),
+        );
+        return new Uint8Array(await slice.arrayBuffer());
+      };
 
       /**
-       * Sequential producer.
+       * Producer: reads ahead, hands frames to the shared queue, blocks when
+       * the queue is full.
        */
       const producer = (async () => {
-        try {
-          for (
-            let idx = 0;
-            idx < totalChunks;
-            idx++
+        const inFlight: { index: number; read: Promise<Uint8Array> }[] = [];
+        let nextToRead = 0;
+
+        const topUp = () => {
+          while (
+            inFlight.length < READ_AHEAD_CHUNKS &&
+            nextToRead < totalChunks
           ) {
+            const index = nextToRead++;
+            if (!readEveryChunk && alreadyHas(index)) continue;
+            inFlight.push({ index, read: readChunk(index) });
+          }
+        };
+
+        try {
+          topUp();
+
+          while (inFlight.length > 0) {
             if (cancelled) break;
 
-            const start = idx * CHUNK_SIZE;
+            const next = inFlight.shift()!;
+            const bytes = await next.read;
 
-            const slice = file.slice(
-              start,
-              start + CHUNK_SIZE,
-            );
+            // Issue the next read before doing anything with this chunk, so
+            // I/O and framing overlap instead of alternating.
+            topUp();
 
-            const bytes = new Uint8Array(
-              await slice.arrayBuffer(),
-            );
+            inlineHasher?.update(bytes);
 
-            /**
-             * Hash EVERY chunk, including resumed chunks.
-             */
-            hasher.update(bytes);
-
-            /**
-             * Don't resend chunks receiver already has.
-             */
-            if (!alreadyReceived.has(idx)) {
-              queues[idx % queues.length].push({
-                index: idx,
-                bytes,
+            if (!alreadyHas(next.index)) {
+              await queue.push({
+                index: next.index,
+                data: frameChunk(next.index, bytes),
+                payloadBytes: bytes.byteLength,
               });
             }
           }
         } finally {
-          queues.forEach((queue) => queue.close());
+          queue.close();
         }
       })();
 
       /**
-       * One consumer per channel.
+       * One consumer per channel, all pulling from the same queue.
        */
-      const consumers = channels.map(
-        (channel, channelIdx) =>
-          (async () => {
-            const window = windows[channelIdx]!;
+      const consumers = channels.map((channel, channelIdx) =>
+        (async () => {
+          const window = windows[channelIdx]!;
 
-            for await (const {
-              index,
-              bytes,
-            } of queues[channelIdx]) {
-              if (cancelled) break;
+          for (;;) {
+            if (cancelled) break;
 
-              await waitForBufferSpace(
-                channel,
-                window.getWindow(),
-                window.getLowWatermark(),
-                cancelledPromise,
-              );
+            const frame = await queue.pull();
+            if (!frame) break;
+            if (cancelled) break;
 
-              if (cancelled) break;
+            await waitForBufferSpace(
+              channel,
+              window.getWindow(),
+              window.getLowWatermark(),
+              cancelledPromise,
+            );
 
-              await safeSend(
-                channel,
-                frameChunk(index, bytes),
-              );
+            if (cancelled) break;
 
-              bytesTransferredAllFiles +=
-                bytes.byteLength;
+            await safeSend(channel, frame.data);
 
-              const r = rate.record(
-                bytesTransferredAllFiles,
-              );
+            bytesTransferredAllFiles += frame.payloadBytes;
 
-              window.maybeAdjust(r);
+            const r = rate.record(bytesTransferredAllFiles);
 
-              const remaining =
-                totalBytesAllFiles -
-                bytesTransferredAllFiles;
+            window.maybeAdjust(r);
 
-              callbacks.onProgress?.({
-                bytesTransferred:
-                  bytesTransferredAllFiles,
-                totalBytes: totalBytesAllFiles,
-                fileName: file.name,
-                fileIndex,
-                totalFiles: totalFilesReported,
-                ratePerSec: r,
-                etaSeconds:
-                  r > 0
-                    ? remaining / r
-                    : Infinity,
-                windowBytes: windows.reduce(
-                  (sum, currentWindow) =>
-                    sum +
-                    currentWindow.getWindow(),
-                  0,
-                ),
-              });
-            }
-          })(),
+            const remaining = totalBytesAllFiles - bytesTransferredAllFiles;
+
+            progress.push({
+              bytesTransferred: bytesTransferredAllFiles,
+              totalBytes: totalBytesAllFiles,
+              fileName: file.name,
+              fileIndex,
+              totalFiles: totalFilesReported,
+              ratePerSec: r,
+              etaSeconds: r > 0 ? remaining / r : Infinity,
+              windowBytes: windows.reduce(
+                (sum, currentWindow) => sum + currentWindow.getWindow(),
+                0,
+              ),
+            });
+          }
+        })(),
       );
 
       /**
-       * Wait for producer and every channel consumer.
+       * Wait for the producer and every channel consumer.
        */
-      await Promise.all([
-        producer,
-        ...consumers,
-      ]);
+      try {
+        await Promise.all([producer, ...consumers]);
+      } finally {
+        // If any consumer threw, the others may still be parked on pull() —
+        // closing releases them instead of leaking a pending promise.
+        queue.close();
+      }
+
+      progress.flush();
 
       if (cancelled) {
         throw new Error(cancelReason);
       }
 
       /**
-       * Hash is now complete.
+       * Hash: normally already finished in the worker by now.
        */
-      const sha256 = hasher.digestHex();
+      let sha256: string;
+      if (backgroundHash) {
+        try {
+          sha256 = await backgroundHash;
+        } catch {
+          sha256 = await hashFileOnMainThread(file);
+        }
+      } else {
+        sha256 = inlineHasher!.digestHex();
+      }
 
       await safeSend(
         controlChannel,
@@ -839,44 +977,36 @@ export async function sendFiles(
     }
 
     if (!cancelled) {
+      progress.flush();
       callbacks.onAllComplete?.();
     }
   } catch (err) {
-    const rawMessage =
-      err instanceof Error
-        ? err.message
-        : "transfer failed";
+    const rawMessage = err instanceof Error ? err.message : "transfer failed";
     const message = toFriendlyError(rawMessage);
 
     /**
      * Best-effort cancellation notification — skip it if this cancellation
-     * came FROM the receiver in the first place, no need to echo it back.
+     * came FROM the receiver in the first place.
      */
-    if (!cancelledByPeer) try {
-      controlChannel.send(
-        JSON.stringify({
-          type: "CANCEL",
-          reason: message,
-        }),
-      );
-    } catch {
-      // The channel may itself be broken.
-    }
+    if (!cancelledByPeer)
+      try {
+        controlChannel.send(JSON.stringify({ type: "CANCEL", reason: message }));
+      } catch {
+        // The channel may itself be broken.
+      }
 
     callbacks.onError?.(message);
   } finally {
+    progress.dispose();
     if (onControlMessage) {
-      controlChannel.removeEventListener(
-        "message",
-        onControlMessage,
-      );
+      controlChannel.removeEventListener("message", onControlMessage);
     }
   }
 }
 
 /**
- * Wait until the channel's buffered amount drops below
- * the adaptive low-watermark.
+ * Wait until the channel's buffered amount drops below the adaptive
+ * low-watermark.
  */
 function waitForBufferSpace(
   channel: TransferDataChannel,
@@ -884,39 +1014,24 @@ function waitForBufferSpace(
   lowWaterMark: number,
   cancelledPromise?: Promise<void>,
 ): Promise<void> {
-  if (
-    channel.bufferedAmount <=
-    highWaterMark
-  ) {
+  if (channel.bufferedAmount <= highWaterMark) {
     return Promise.resolve();
   }
 
   return new Promise((resolve) => {
-    channel.bufferedAmountLowThreshold =
-      lowWaterMark;
+    channel.bufferedAmountLowThreshold = lowWaterMark;
 
     const onLow = () => {
-      channel.removeEventListener(
-        "bufferedamountlow",
-        onLow,
-      );
-
+      channel.removeEventListener("bufferedamountlow", onLow);
       resolve();
     };
 
-    channel.addEventListener(
-      "bufferedamountlow",
-      onLow,
-    );
+    channel.addEventListener("bufferedamountlow", onLow);
 
     // Don't hang forever waiting for room if the transfer got cancelled
     // while we were blocked here.
     cancelledPromise?.then(() => {
-      channel.removeEventListener(
-        "bufferedamountlow",
-        onLow,
-      );
-
+      channel.removeEventListener("bufferedamountlow", onLow);
       resolve();
     });
   });
@@ -924,15 +1039,24 @@ function waitForBufferSpace(
 
 /**
  * Receiver side.
+ *
+ * The important change here is that bytes are no longer accumulated for the
+ * whole transfer and then processed at the end. Chunks arrive out of order,
+ * so the receiver tracks a contiguous prefix pointer: every time the chunk
+ * at `nextIndex` shows up, it and anything queued behind it are hashed and
+ * written out immediately, then dropped. By the time the last chunk lands,
+ * the hash is already computed and the bytes are already where they need to
+ * be — there is no reassemble pass, no second copy of the file, and no
+ * verification stall.
  */
 export class FileReceiver {
-  private currentMeta: FileMetadata | null =
-    null;
+  private currentMeta: FileMetadata | null = null;
 
-  private chunks: (
-    | Uint8Array
-    | undefined
-  )[] = [];
+  /** Chunks that arrived ahead of the contiguous prefix, keyed by index. */
+  private reorderBuffer = new Map<number, Uint8Array>();
+
+  /** Every chunk below this index has been hashed and written. */
+  private nextIndex = 0;
 
   private chunksReceived = 0;
 
@@ -948,205 +1072,146 @@ export class FileReceiver {
 
   private rate = new RateMeter();
 
+  private progress: ProgressEmitter;
+
   private readonly callbacks: TransferCallbacks;
+
+  private sinkFactory: SinkFactory;
+
+  private sink: FileSink | null = null;
+
+  /**
+   * Serialises sink writes. Every write is chained onto this, so the sink
+   * only ever sees bytes in order and never has to deal with a gap — even
+   * though chunks arrive out of order and the sink itself may not exist yet
+   * when the first chunk lands.
+   */
+  private writeChain: Promise<void> = Promise.resolve();
+
+  private writeError: Error | null = null;
+
+  private hasher: StreamingHasher | null = null;
+
+  private finished = false;
 
   /**
    * Chunks which arrive before FILE_METADATA.
    *
-   * This can happen in parallel mode when channel 1/2/3
-   * delivers before channel 0.
+   * This can happen in parallel mode when channel 1/2/3 delivers before
+   * channel 0.
    */
   private pendingChunks = new Map<number, Uint8Array>();
 
   /**
    * Channel 0 used for control replies.
    */
-  private controlChannel:
-    | TransferDataChannel
-    | null = null;
+  private controlChannel: TransferDataChannel | null = null;
 
   constructor(
     callbacks: TransferCallbacks,
     totalFiles = 1,
     totalBytesAllFiles = 0,
+    sinkFactory: SinkFactory = memorySinkFactory,
   ) {
     this.callbacks = callbacks;
     this.totalFiles = totalFiles;
-    this.totalBytesAllFiles =
-      totalBytesAllFiles;
+    this.totalBytesAllFiles = totalBytesAllFiles;
+    this.sinkFactory = sinkFactory;
+    this.progress = new ProgressEmitter(callbacks.onProgress);
+  }
+
+  /**
+   * Choose where incoming files are written. Call before the transfer
+   * starts; the default keeps everything in memory and produces a File.
+   */
+  setSinkFactory(factory: SinkFactory): void {
+    this.sinkFactory = factory;
   }
 
   /**
    * Set the channel used for control responses.
    */
-  setControlChannel(
-    channel: TransferDataChannel,
-  ): void {
+  setControlChannel(channel: TransferDataChannel): void {
     this.controlChannel = channel;
   }
 
   /**
-   * Best-effort notification to the sender that the receiver cancelled —
-   * called from the UI's "Cancel receive" handler. Safe to call even if no
-   * control channel is open yet (e.g. cancelled before connecting).
+   * Best-effort notification to the sender that the receiver cancelled.
    */
   notifyCancel(reason: string): void {
     try {
-      this.controlChannel?.send(
-        JSON.stringify({ type: "CANCEL", reason }),
-      );
+      this.controlChannel?.send(JSON.stringify({ type: "CANCEL", reason }));
     } catch {
       // Best effort only — the channel may already be gone.
     }
   }
 
   /**
+   * Release everything this receiver is holding. Safe to call more than
+   * once; used by the UI's cancel path so an abandoned transfer doesn't keep
+   * a half-written file or a worker hash stream alive.
+   */
+  dispose(): void {
+    this.finished = true;
+    this.progress.dispose();
+    this.hasher?.abort();
+    this.hasher = null;
+    this.reorderBuffer.clear();
+    this.pendingChunks.clear();
+    const sink = this.sink;
+    this.sink = null;
+    if (sink) void Promise.resolve(sink.abort()).catch(() => {});
+  }
+
+  /**
    * Handle either JSON control data or binary chunks.
    */
-  handleMessage(
-    data: string | ArrayBuffer,
-  ): void {
+  handleMessage(data: string | ArrayBuffer): void {
     /**
      * JSON/control message.
      */
     if (typeof data === "string") {
       const msg = parseControlMessage(data);
 
+      /**
+       * An unparseable control frame is ignored, not fatal. A single odd
+       * message — a field from a newer build, a truncated frame — must never
+       * destroy an otherwise healthy multi-gigabyte transfer. The sender's
+       * equivalent handler has always behaved this way.
+       */
       if (!msg) {
-        this.callbacks.onError?.(
-          toFriendlyError("Invalid control message received."),
-        );
         return;
       }
 
-      /**
-       * Batch information.
-       */
       if (msg.type === "BATCH_INFO") {
         this.totalFiles = msg.totalFiles;
         this.totalBytesAllFiles = msg.totalBytes;
-
         return;
       }
 
-      /**
-       * File metadata.
-       */
       if (msg.type === "FILE_METADATA") {
-        const meta = msg.meta;
-
-        /**
-         * Same file announced again during resume.
-         *
-         * Do NOT reset existing chunks.
-         */
-        if (
-          this.currentMeta?.fileId ===
-          meta.fileId
-        ) {
-          return;
-        }
-
-        this.currentMeta = meta;
-
-        this.chunks = new Array(
-          meta.totalChunks,
-        );
-
-        this.chunksReceived = 0;
-
-        this.bytesReceived = 0;
-
-        /**
-         * Absorb chunks that arrived before metadata.
-         */
-        for (const [
-          index,
-          bytes,
-        ] of this.pendingChunks) {
-          if (
-            index < meta.totalChunks &&
-            !this.chunks[index]
-          ) {
-            this.chunks[index] = bytes;
-
-            this.chunksReceived++;
-
-            this.bytesReceived +=
-              bytes.byteLength;
-
-            this.bytesReceivedAllFiles +=
-              bytes.byteLength;
-          }
-        }
-
-        this.pendingChunks.clear();
-
-        this.callbacks.onMetadata?.(
-          meta,
-        );
-
+        this.beginFile(msg.meta);
         return;
       }
 
-      /**
-       * Resume query.
-       */
-      if (
-        msg.type === "RESUME_QUERY"
-      ) {
-        const receivedIndexes =
-          this.currentMeta?.fileId === msg.fileId
-            ? this.chunks.reduce<number[]>(
-                (acc, chunk, index) => {
-                  if (chunk) {
-                    acc.push(index);
-                  }
-
-                  return acc;
-                },
-                [],
-              )
-            : [];
-
-        try {
-          this.controlChannel?.send(
-            JSON.stringify({
-              type: "RESUME_STATUS",
-              fileId: msg.fileId,
-              receivedIndexes,
-            }),
-          );
-        } catch {
-          // Best effort only — the control channel may already be gone.
-        }
-
+      if (msg.type === "RESUME_QUERY") {
+        this.replyResumeStatus(msg.fileId);
         return;
       }
 
-      /**
-       * Sender cancellation.
-       */
       if (msg.type === "CANCEL") {
         this.callbacks.onError?.(
-          msg.reason ||
-            "The sender cancelled the transfer.",
+          msg.reason || "The sender cancelled the transfer.",
         );
-
         return;
       }
 
-      /**
-       * File finished.
-       */
       if (msg.type === "TRANSFER_COMPLETE") {
         const meta = this.currentMeta;
         if (!meta || meta.fileId !== msg.fileId) {
           return;
         }
-
         void this.finishCurrentFile(msg.sha256);
-
         return;
       }
 
@@ -1156,234 +1221,321 @@ export class FileReceiver {
     /**
      * Binary chunk.
      */
-    const { index, bytes } =
-      unframeChunk(data);
+    const { index, bytes } = unframeChunk(data);
 
     /**
-     * Metadata has not arrived yet.
-     *
-     * Preserve the chunk instead of losing it.
+     * Metadata has not arrived yet — hold on to the chunk instead of losing
+     * it.
      */
     if (!this.currentMeta) {
-      if (
-        !this.pendingChunks.has(index)
-      ) {
-        this.pendingChunks.set(
-          index,
-          bytes,
-        );
+      if (!this.pendingChunks.has(index)) {
+        this.pendingChunks.set(index, bytes);
       }
-
       return;
     }
 
-    /**
-     * Ignore invalid indexes.
-     */
-    if (
-      index >=
-      this.currentMeta.totalChunks
-    ) {
-      this.callbacks.onError?.(
-        toFriendlyError(
-          `Invalid chunk index ${index} for file with ${this.currentMeta.totalChunks} chunks.`,
-        ),
-      );
+    this.acceptChunk(index, bytes);
+    this.emitProgress();
+  }
 
+  // -------------------------------------------------------------------------
+
+  private beginFile(meta: FileMetadata): void {
+    /**
+     * Same file announced again during resume — keep everything we have.
+     */
+    if (this.currentMeta?.fileId === meta.fileId) {
       return;
     }
 
-    /**
-     * Store by index rather than arrival order.
-     */
-    if (!this.chunks[index]) {
-      this.chunks[index] = bytes;
+    this.currentMeta = meta;
+    this.nextIndex = 0;
+    this.reorderBuffer.clear();
+    this.chunksReceived = 0;
+    this.bytesReceived = 0;
+    this.finished = false;
+    this.writeError = null;
 
-      this.chunksReceived++;
-
-      this.bytesReceived +=
-        bytes.byteLength;
-
-      this.bytesReceivedAllFiles +=
-        bytes.byteLength;
-    }
+    this.hasher?.abort();
+    this.hasher = createStreamingHasher();
 
     /**
-     * Progress.
+     * Create the destination and make it the head of the write chain, so
+     * writes queued before it resolves still land in order.
      */
-    const r = this.rate.record(
-      this.bytesReceivedAllFiles,
+    const sinkPromise = Promise.resolve(
+      this.sinkFactory({
+        name: meta.name,
+        size: meta.size,
+        mimeType: meta.mimeType || "application/octet-stream",
+      }),
     );
 
-    const total =
-      this.totalBytesAllFiles ||
-      this.currentMeta.size ||
-      this.bytesReceived;
+    this.writeChain = sinkPromise.then((sink) => {
+      this.sink = sink;
+    });
 
-    const remaining =
-      total -
-      this.bytesReceivedAllFiles;
+    this.writeChain.catch((err: unknown) => {
+      this.writeError =
+        err instanceof Error ? err : new Error("could not open destination");
+    });
 
-    this.callbacks.onProgress?.({
-      bytesTransferred:
-        this.bytesReceivedAllFiles,
+    /**
+     * Absorb chunks that arrived before metadata, in index order so the
+     * prefix pointer advances as far as it can.
+     */
+    if (this.pendingChunks.size > 0) {
+      const early = [...this.pendingChunks.entries()].sort(
+        (a, b) => a[0] - b[0],
+      );
+      this.pendingChunks.clear();
+      for (const [index, bytes] of early) {
+        this.acceptChunk(index, bytes);
+      }
+    }
+
+    this.callbacks.onMetadata?.(meta);
+  }
+
+  /**
+   * Store or consume a chunk, maintaining the contiguous prefix.
+   */
+  private acceptChunk(index: number, bytes: Uint8Array): void {
+    const meta = this.currentMeta;
+    if (!meta) return;
+
+    if (index >= meta.totalChunks) {
+      this.callbacks.onError?.(
+        toFriendlyError(
+          `Invalid chunk index ${index} for file with ${meta.totalChunks} chunks.`,
+        ),
+      );
+      return;
+    }
+
+    // Duplicate: either already consumed, or already waiting in the buffer.
+    if (index < this.nextIndex || this.reorderBuffer.has(index)) {
+      return;
+    }
+
+    this.chunksReceived++;
+    this.bytesReceived += bytes.byteLength;
+    this.bytesReceivedAllFiles += bytes.byteLength;
+
+    if (index !== this.nextIndex) {
+      this.reorderBuffer.set(index, bytes);
+      return;
+    }
+
+    this.consume(bytes);
+    this.nextIndex++;
+
+    // Drain whatever was queued behind this chunk.
+    for (;;) {
+      const queued = this.reorderBuffer.get(this.nextIndex);
+      if (!queued) break;
+      this.reorderBuffer.delete(this.nextIndex);
+      this.consume(queued);
+      this.nextIndex++;
+    }
+  }
+
+  /**
+   * Hash and write one chunk of the contiguous prefix, then drop it.
+   */
+  private consume(bytes: Uint8Array): void {
+    this.hasher?.update(bytes);
+
+    this.writeChain = this.writeChain
+      .then(() => {
+        if (this.writeError) return;
+        return this.sink?.write(bytes);
+      })
+      .catch((err: unknown) => {
+        if (!this.writeError) {
+          this.writeError =
+            err instanceof Error ? err : new Error("failed to write file data");
+        }
+      });
+  }
+
+  private emitProgress(): void {
+    const meta = this.currentMeta;
+    if (!meta) return;
+
+    const r = this.rate.record(this.bytesReceivedAllFiles);
+
+    const total = this.totalBytesAllFiles || meta.size || this.bytesReceived;
+
+    const remaining = total - this.bytesReceivedAllFiles;
+
+    this.progress.push({
+      bytesTransferred: this.bytesReceivedAllFiles,
       totalBytes: total,
-      fileName:
-        this.currentMeta.name,
+      fileName: meta.name,
       fileIndex: this.fileIndex,
       totalFiles: this.totalFiles,
       ratePerSec: r,
-      etaSeconds:
-        r > 0
-          ? Math.max(
-              0,
-              remaining / r,
-            )
-          : Infinity,
+      etaSeconds: r > 0 ? Math.max(0, remaining / r) : Infinity,
     });
+  }
+
+  /**
+   * Answer a RESUME_QUERY.
+   *
+   * The literal list of every received index can be enormous — a 10 GB file
+   * at 256 KiB chunks is roughly 40,000 indexes, which as JSON is far larger
+   * than the channel's own max message size. Since nearly everything
+   * received is contiguous, send the prefix as a single number and list only
+   * the stragglers. Older senders that ignore `contiguousUpTo` simply resend
+   * more than they need to, which is safe.
+   */
+  private replyResumeStatus(fileId: string): void {
+    const matches = this.currentMeta?.fileId === fileId;
+
+    const payload = {
+      type: "RESUME_STATUS",
+      fileId,
+      contiguousUpTo: matches ? this.nextIndex : 0,
+      receivedIndexes: matches ? [...this.reorderBuffer.keys()] : [],
+    };
+
+    try {
+      this.controlChannel?.send(JSON.stringify(payload));
+    } catch {
+      // Best effort only — the control channel may already be gone.
+    }
   }
 
   /**
    * Complete and verify the current file.
    */
-  private async finishCurrentFile(
-    sha256?: string,
-  ): Promise<void> {
-    if (!this.currentMeta) {
+  private async finishCurrentFile(sha256?: string): Promise<void> {
+    const meta = this.currentMeta;
+    if (!meta || this.finished) {
       return;
     }
 
     /**
      * TRANSFER_COMPLETE can arrive slightly before the final chunk(s),
      * especially in parallel mode where channels finish at slightly
-     * different times, or on a slow/jittery link. A single fixed 500ms
-     * wait was too short for that — it's exactly what made big transfers
-     * look "stuck at 100%" on the receiver even though the sender had
-     * already finished and the rest of the data was still in flight. Poll
-     * instead of a one-shot wait, and give it a real window before giving
-     * up.
+     * different times. Poll rather than assume.
      */
-    const totalChunks = this.currentMeta.totalChunks;
-    const COMPLETION_POLL_MS = 200;
-    const COMPLETION_MAX_WAIT_MS = 8000;
-    if (this.chunksReceived < totalChunks) {
-      const deadline =
-        performance.now() + COMPLETION_MAX_WAIT_MS;
+    const totalChunks = meta.totalChunks;
+    const COMPLETION_POLL_MS = 100;
+    const COMPLETION_MAX_WAIT_MS = 15_000;
 
-      while (
-        this.chunksReceived < totalChunks &&
-        performance.now() < deadline
-      ) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, COMPLETION_POLL_MS),
-        );
+    if (this.chunksReceived < totalChunks) {
+      const deadline = performance.now() + COMPLETION_MAX_WAIT_MS;
+
+      while (this.chunksReceived < totalChunks && performance.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, COMPLETION_POLL_MS));
       }
 
       if (this.chunksReceived < totalChunks) {
-        this.callbacks.onError?.(
-          toFriendlyError(
-            `Transfer incomplete: received ${this.chunksReceived}/${totalChunks} chunks.`,
-          ),
+        this.fail(
+          `Transfer incomplete: received ${this.chunksReceived}/${totalChunks} chunks.`,
         );
-
         return;
       }
     }
 
-    /**
-     * Make sure there are no holes.
-     */
-    for (
-      let i = 0;
-      i < this.currentMeta.totalChunks;
-      i++
-    ) {
-      if (!this.chunks[i]) {
-        this.callbacks.onError?.(
-          toFriendlyError(
-            `Transfer incomplete: missing chunk ${i}.`,
-          ),
-        );
+    if (this.nextIndex < totalChunks) {
+      this.fail(`Transfer incomplete: missing chunk ${this.nextIndex}.`);
+      return;
+    }
 
-        return;
-      }
+    this.finished = true;
+
+    this.callbacks.onVerifying?.(meta.name);
+
+    /**
+     * Flush every queued write before touching the result.
+     */
+    try {
+      await this.writeChain;
+    } catch (err) {
+      this.writeError =
+        err instanceof Error ? err : new Error("failed to write file data");
+    }
+
+    if (this.writeError) {
+      this.fail(`Could not save the file: ${this.writeError.message}`);
+      return;
     }
 
     /**
-     * All bytes are in. Reassembling + hashing a large file is not
-     * instant — tell the UI so it can show "Verifying…" instead of
-     * looking frozen at 100%.
-     */
-    this.callbacks.onVerifying?.(
-      this.currentMeta.name,
-    );
-
-    /**
-     * Reassemble in chunk-index order.
-     */
-    const blob = new Blob(
-      this.chunks as BlobPart[],
-      {
-        type:
-          this.currentMeta.mimeType ||
-          "application/octet-stream",
-      },
-    );
-
-    /**
-     * Verify sender hash.
+     * The hash was computed as the bytes arrived — this just collects it.
      */
     if (sha256) {
-      const digest =
-        await crypto.subtle.digest(
-          "SHA-256",
-          await blob.arrayBuffer(),
-        );
-
-      const hex = [
-        ...new Uint8Array(digest),
-      ]
-        .map((byte) =>
-          byte
-            .toString(16)
-            .padStart(2, "0"),
-        )
-        .join("");
-
-      if (hex !== sha256) {
-        this.callbacks.onError?.(
-          toFriendlyError(
-            "HASH_MISMATCH: received file does not match sender's hash",
-          ),
-        );
-
+      let digest: string;
+      try {
+        digest = (await this.hasher?.digestHex()) ?? "";
+      } catch {
+        this.fail("Could not verify the received file.");
         return;
       }
+
+      if (digest !== sha256) {
+        this.fail("HASH_MISMATCH: received file does not match sender's hash");
+        return;
+      }
+    } else {
+      this.hasher?.abort();
     }
 
-    /**
-     * Construct final File.
-     */
-    const file = new File(
-      [blob],
-      this.currentMeta.name,
-      {
-        type: blob.type,
-      },
-    );
+    this.hasher = null;
 
-    this.callbacks.onFileComplete?.(
-      file,
-    );
+    const sink = this.sink;
+    this.sink = null;
+
+    if (!sink) {
+      this.fail("Could not save the file: no destination was available.");
+      return;
+    }
+
+    let result;
+    try {
+      result = await sink.finish();
+    } catch (err) {
+      this.fail(
+        `Could not save the file: ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+      );
+      return;
+    }
+
+    this.progress.flush();
+
+    if (result.file) {
+      this.callbacks.onFileComplete?.(result.file);
+    } else {
+      this.callbacks.onFileSaved?.(meta.name);
+    }
 
     this.fileIndex++;
 
-    if (
-      this.fileIndex >=
-      this.totalFiles
-    ) {
+    if (this.fileIndex >= this.totalFiles) {
       this.callbacks.onAllComplete?.();
     }
+  }
+
+  /**
+   * Report a terminal problem with the current file and throw away anything
+   * partially written, so a failed transfer never leaves a plausible-looking
+   * file behind.
+   */
+  private fail(message: string): void {
+    this.finished = true;
+    this.hasher?.abort();
+    this.hasher = null;
+
+    const sink = this.sink;
+    this.sink = null;
+    if (sink) void Promise.resolve(sink.abort()).catch(() => {});
+
+    this.callbacks.onError?.(toFriendlyError(message));
   }
 }
 
@@ -1391,23 +1543,21 @@ export class FileReceiver {
  * Save a completed file to disk.
  *
  * Inside the Kimo desktop app this opens a native "Save As" dialog and
- * writes the file directly via Rust (see apps/desktop/src-tauri) instead
- * of relying on the browser's download manager. In a plain browser tab
- * (the Vercel-deployed web app) this is unchanged from before: the
- * classic `<a download>` click-simulation trick.
+ * writes the file directly via Rust (see apps/desktop/src-tauri) instead of
+ * relying on the browser's download manager. In a plain browser tab this is
+ * the classic `<a download>` click-simulation trick.
+ *
+ * When the receiver used a DiskSink this is never called — the bytes went
+ * straight to their destination as they arrived.
  */
-export async function downloadFile(
-  file: File,
-): Promise<void> {
+export async function downloadFile(file: File): Promise<void> {
   const { saveFileNatively } = await import("../native/save");
   const savedNatively = await saveFileNatively(file);
   if (savedNatively) return;
 
-  const url =
-    URL.createObjectURL(file);
+  const url = URL.createObjectURL(file);
 
-  const a =
-    document.createElement("a");
+  const a = document.createElement("a");
 
   a.href = url;
 
